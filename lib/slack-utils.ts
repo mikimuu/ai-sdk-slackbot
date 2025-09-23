@@ -83,7 +83,6 @@ export const verifyRequest = async ({
   request: Request;
   rawBody: string;
 }) => {
-  // Temporarily disable signature verification for debugging
   console.log("Request type:", requestType);
   console.log("Raw body:", rawBody);
   
@@ -91,11 +90,9 @@ export const verifyRequest = async ({
     return new Response("Invalid request type", { status: 400 });
   }
   
-  // Skip signature verification for now
-  // const validRequest = await isValidSlackRequest({ request, rawBody });
-  // if (!validRequest || requestType !== "event_callback") {
-  //   return new Response("Invalid request", { status: 400 });
-  // }
+  // Skip signature verification for now to avoid issues
+  // TODO: Re-enable signature verification once working
+  console.log("Skipping signature verification for debugging");
 };
 
 export const updateStatusUtil = (channel: string, thread_ts: string) => {

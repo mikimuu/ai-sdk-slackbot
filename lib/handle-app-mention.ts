@@ -16,7 +16,7 @@ export async function handleNewAppMention(
   console.log("Handling app mention");
   console.log("Event details:", JSON.stringify(event, null, 2));
   console.log("Bot user ID:", botUserId);
-  
+
   if (event.bot_id || event.bot_id === botUserId || event.bot_profile) {
     console.log("Skipping app mention - bot message");
     return;
@@ -38,6 +38,7 @@ export async function handleNewAppMention(
       inProgressReactionActive = true;
     } catch (error) {
       console.error("Failed to add in-progress reaction", error);
+      // Continue processing even if reaction fails
     }
   }
 
@@ -90,6 +91,7 @@ export async function handleNewAppMention(
         });
       } catch (error) {
         console.error("Failed to add done reaction", error);
+        // Continue even if reaction fails
       }
     }
   } catch (error) {
