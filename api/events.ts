@@ -8,20 +8,26 @@ import { handleNewAppMention } from "../lib/handle-app-mention";
 import { verifyRequest, getBotId } from "../lib/slack-utils";
 
 export async function POST(request: Request) {
-  const rawBody = await request.text();
-  const payload = JSON.parse(rawBody);
-  const requestType = payload.type as "url_verification" | "event_callback";
-
-  // See https://api.slack.com/events/url_verification
-  if (requestType === "url_verification") {
-    return new Response(payload.challenge, { status: 200 });
-  }
-
-  await verifyRequest({ requestType, request, rawBody });
-
   try {
-    const botUserId = await getBotId();
+    const rawBody = await request.text();
+    const payload = JSON.parse(rawBody);
+    const requestType = payload.type as "url_verification" | "event_callback";
 
+    // See https://api.slack.com/events/url_verification
+    if (requestType === "url_verification") {
+      return new Response(payload.challenge, { status: 200 });
+    }
+
+    const verificationResult = await verifyRequest({
+      requestType,
+      request,
+      rawBody,
+    });
+    if (verificationResult) {
+      return verificationResult; // This will be an error response if verification failed
+    }
+
+    const botUserId = await getBotId();
     const event = payload.event as SlackEvent;
 
     if (event.type === "app_mention") {
@@ -45,7 +51,12 @@ export async function POST(request: Request) {
 
     return new Response("Success!", { status: 200 });
   } catch (error) {
-    console.error("Error generating response", error);
-    return new Response("Error generating response", { status: 500 });
+    console.error("Error in POST handler:", error);
+    return new Response(
+      `Error processing request: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+      { status: 500 }
+    );
   }
 }

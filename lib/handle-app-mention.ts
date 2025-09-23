@@ -1,5 +1,10 @@
 import { AppMentionEvent } from "@slack/web-api";
-import { client, getThread } from "./slack-utils";
+import {
+  DONE_REACTION,
+  IN_PROGRESS_REACTION,
+  client,
+  getThread,
+} from "./slack-utils";
 import { generateResponse } from "./generate-response";
 
 const updateStatusUtil = async (
@@ -38,12 +43,73 @@ export async function handleNewAppMention(
   const { thread_ts, channel } = event;
   const updateMessage = await updateStatusUtil("is thinking...", event);
 
-  if (thread_ts) {
-    const messages = await getThread(channel, thread_ts, botUserId);
-    const result = await generateResponse(messages);
+  const reactionTarget = event.ts;
+  let inProgressReactionActive = false;
+
+  if (reactionTarget) {
+    try {
+      await client.reactions.add({
+        channel,
+        timestamp: reactionTarget,
+        name: IN_PROGRESS_REACTION,
+      });
+      inProgressReactionActive = true;
+    } catch (error) {
+      console.error("Failed to add in-progress reaction", error);
+    }
+  }
+
+  try {
+    let result: string;
+
+    if (thread_ts) {
+      const messages = await getThread(channel, thread_ts, botUserId);
+      result = await generateResponse(messages);
+    } else {
+      result = await generateResponse([{ role: "user", content: event.text }]);
+    }
+
     await updateMessage(result);
-  } else {
-    const result = await generateResponse([{ role: "user", content: event.text }]);
-    await updateMessage(result);
+
+    if (reactionTarget) {
+      if (inProgressReactionActive) {
+        try {
+          await client.reactions.remove({
+            channel,
+            timestamp: reactionTarget,
+            name: IN_PROGRESS_REACTION,
+          });
+        } catch (error) {
+          console.error("Failed to remove in-progress reaction", error);
+        }
+        inProgressReactionActive = false;
+      }
+
+      try {
+        await client.reactions.add({
+          channel,
+          timestamp: reactionTarget,
+          name: DONE_REACTION,
+        });
+      } catch (error) {
+        console.error("Failed to add done reaction", error);
+      }
+    }
+  } catch (error) {
+    if (reactionTarget && inProgressReactionActive) {
+      try {
+        await client.reactions.remove({
+          channel,
+          timestamp: reactionTarget,
+          name: IN_PROGRESS_REACTION,
+        });
+      } catch (removeError) {
+        console.error(
+          "Failed to remove in-progress reaction after error",
+          removeError,
+        );
+      }
+    }
+    throw error;
   }
 }

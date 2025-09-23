@@ -11,6 +11,7 @@ An AI-powered chatbot for Slack powered by the [AI SDK by Vercel](https://sdk.ve
 - Works both with app mentions and as an assistant in direct messages
 - Maintains conversation context within both threads and direct messages
 - HR-focused onboarding that helps recruiters polish job descriptions, outreach messages, and interview plans
+- Adds configurable Slack reactions (defaults to `:hourglass_flowing_sand:` while processing, `:check_mark_button:` when complete)
 - Easily extensible architecture to add custom tools (e.g., ATS or CRM integrations)
 
 ## Prerequisites
@@ -47,6 +48,7 @@ pnpm install
       - `app_mentions:read`
       - `assistant:write`
       - `chat:write`
+      - `reactions:write`
       - `im:history`
       - `im:read`
       - `im:write`
@@ -78,6 +80,10 @@ SLACK_SIGNING_SECRET=your-signing-secret
 
 # OpenAI Credentials
 OPENAI_API_KEY=your-openai-api-key
+
+# Optional: Slack reaction names
+SLACK_REACTION_IN_PROGRESS=砂時計
+SLACK_REACTION_DONE=check_mark_button
 ```
 
 Replace the placeholder values with your actual tokens.
@@ -142,6 +148,8 @@ The bot maintains context within both threads and direct messages, so it can fol
 The chatbot prompts the model to behave like a staffing and talent-introduction assistant. Tailor its tone or supported workflows by editing the system prompt in `lib/generate-response.ts` or by adjusting the helper messages in `lib/handle-messages.ts`.
 
 To integrate with internal systems (ATS, CRM, knowledge bases, etc.), extend the Slack handlers to call those services before or after generating the model response.
+
+If your workspace uses different emoji for progress tracking, adjust `SLACK_REACTION_IN_PROGRESS` and `SLACK_REACTION_DONE` (or change the defaults in `lib/slack-utils.ts`).
 
 ## License
 

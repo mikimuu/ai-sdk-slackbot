@@ -1,47 +1,67 @@
-import { WebClient } from '@slack/web-api';
-import { CoreMessage } from 'ai'
-import crypto from 'crypto'
+import { WebClient } from "@slack/web-api";
+import { CoreMessage } from "ai";
+import crypto from "crypto";
 
-const signingSecret = process.env.SLACK_SIGNING_SECRET!
+const signingSecret = process.env.SLACK_SIGNING_SECRET;
 
-export const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+if (!signingSecret) {
+  throw new Error(
+    "SLACK_SIGNING_SECRET environment variable is required but not set"
+  );
+}
+
+const botToken = process.env.SLACK_BOT_TOKEN;
+
+if (!botToken) {
+  throw new Error(
+    "SLACK_BOT_TOKEN environment variable is required but not set"
+  );
+}
+
+export const client = new WebClient(botToken);
+
+export const IN_PROGRESS_REACTION =
+  process.env.SLACK_REACTION_IN_PROGRESS?.trim() || "hourglass_flowing_sand";
+
+export const DONE_REACTION =
+  process.env.SLACK_REACTION_DONE?.trim() || "check_mark_button";
 
 // See https://api.slack.com/authentication/verifying-requests-from-slack
 export async function isValidSlackRequest({
   request,
   rawBody,
 }: {
-  request: Request
-  rawBody: string
+  request: Request;
+  rawBody: string;
 }) {
   // console.log('Validating Slack request')
-  const timestamp = request.headers.get('X-Slack-Request-Timestamp')
-  const slackSignature = request.headers.get('X-Slack-Signature')
+  const timestamp = request.headers.get("X-Slack-Request-Timestamp");
+  const slackSignature = request.headers.get("X-Slack-Signature");
   // console.log(timestamp, slackSignature)
 
   if (!timestamp || !slackSignature) {
-    console.log('Missing timestamp or signature')
-    return false
+    console.log("Missing timestamp or signature");
+    return false;
   }
 
   // Prevent replay attacks on the order of 5 minutes
   if (Math.abs(Date.now() / 1000 - parseInt(timestamp)) > 60 * 5) {
-    console.log('Timestamp out of range')
-    return false
+    console.log("Timestamp out of range");
+    return false;
   }
 
-  const base = `v0:${timestamp}:${rawBody}`
+  const base = `v0:${timestamp}:${rawBody}`;
   const hmac = crypto
-    .createHmac('sha256', signingSecret)
+    .createHmac("sha256", signingSecret!)
     .update(base)
-    .digest('hex')
-  const computedSignature = `v0=${hmac}`
+    .digest("hex");
+  const computedSignature = `v0=${hmac}`;
 
   // Prevent timing attacks
   return crypto.timingSafeEqual(
     Buffer.from(computedSignature),
     Buffer.from(slackSignature)
-  )
+  );
 }
 
 export const verifyRequest = async ({
@@ -72,7 +92,7 @@ export const updateStatusUtil = (channel: string, thread_ts: string) => {
 export async function getThread(
   channel_id: string,
   thread_ts: string,
-  botUserId: string,
+  botUserId: string
 ): Promise<CoreMessage[]> {
   const { messages } = await client.conversations.replies({
     channel: channel_id,
