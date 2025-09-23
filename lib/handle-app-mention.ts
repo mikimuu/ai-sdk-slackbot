@@ -7,28 +7,7 @@ import {
 } from "./slack-utils";
 import { generateResponse } from "./generate-response";
 
-const updateStatusUtil = async (
-  initialStatus: string,
-  event: AppMentionEvent,
-) => {
-  const initialMessage = await client.chat.postMessage({
-    channel: event.channel,
-    thread_ts: event.thread_ts ?? event.ts,
-    text: initialStatus,
-  });
-
-  if (!initialMessage || !initialMessage.ts)
-    throw new Error("Failed to post initial message");
-
-  const updateMessage = async (status: string) => {
-    await client.chat.update({
-      channel: event.channel,
-      ts: initialMessage.ts as string,
-      text: status,
-    });
-  };
-  return updateMessage;
-};
+// Removed updateStatusUtil since we're posting directly as replies
 
 export async function handleNewAppMention(
   event: AppMentionEvent,
@@ -41,7 +20,7 @@ export async function handleNewAppMention(
   }
 
   const { thread_ts, channel } = event;
-  const updateMessage = await updateStatusUtil("is thinking...", event);
+  // Remove the initial "is thinking..." message since we'll post directly as a reply
 
   const reactionTarget = event.ts;
   let inProgressReactionActive = false;
@@ -69,7 +48,22 @@ export async function handleNewAppMention(
       result = await generateResponse([{ role: "user", content: event.text }]);
     }
 
-    await updateMessage(result);
+    // Post the response as a reply in the thread
+    await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: event.ts, // Reply to the original mention
+      text: result,
+      unfurl_links: false,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: result,
+          },
+        },
+      ],
+    });
 
     if (reactionTarget) {
       if (inProgressReactionActive) {
@@ -110,6 +104,14 @@ export async function handleNewAppMention(
         );
       }
     }
+    
+    // Post error message as a reply
+    await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: event.ts,
+      text: "申し訳ありません。エラーが発生しました。しばらくしてからもう一度お試しください。",
+    });
+    
     throw error;
   }
 }
