@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type {
   AssistantThreadStartedEvent,
   GenericMessageEvent,
@@ -9,7 +10,14 @@ import {
   getThread,
   updateStatusUtil,
 } from "./slack-utils";
-import { generateResponse } from "./generate-response";
+import {
+  clearIdempotency,
+  ensureIdempotency,
+  withLock,
+} from "./redis";
+import { runSlackWorkflow } from "./generate-response";
+import { executionStore } from "./durable-store";
+import { SlackEnvelope } from "./types";
 
 export async function assistantThreadMessage(
   event: AssistantThreadStartedEvent,
@@ -43,6 +51,7 @@ export async function assistantThreadMessage(
 export async function handleNewAssistantMessage(
   event: GenericMessageEvent,
   botUserId: string,
+  envelope: SlackEnvelope
 ) {
   if (
     event.bot_id ||
@@ -53,6 +62,13 @@ export async function handleNewAssistantMessage(
     return;
 
   const { thread_ts, channel } = event;
+  const teamId = envelope.teamId || event.team;
+  if (!teamId) return;
+
+  const idempotencyKey = `${teamId}:${envelope.eventId}:${event.ts}`;
+  const shouldProcess = await ensureIdempotency(idempotencyKey);
+  if (!shouldProcess) return;
+
   const updateStatus = updateStatusUtil(channel, thread_ts);
   await updateStatus("is thinking...");
 
@@ -72,40 +88,78 @@ export async function handleNewAssistantMessage(
     }
   }
 
-  const messages = await getThread(channel, thread_ts, botUserId);
+  const jobId = crypto.randomUUID();
+  const requestId = crypto.randomUUID();
 
   try {
-    const assistantResponse = await generateResponse(messages);
-    await client.chat.postMessage({
-      channel: channel,
-      thread_ts: thread_ts,
-      text: assistantResponse,
-      unfurl_links: false,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: assistantResponse,
-          },
+    const lockKey = `thread:${teamId}:${thread_ts}`;
+    const lockResult = await withLock(lockKey, async () => {
+      await executionStore.createJob({
+        id: jobId,
+        slackTeamId: teamId,
+        slackChannelId: channel,
+        slackThreadTs: thread_ts,
+        slackEventId: envelope.eventId,
+        status: "running",
+        lastError: null,
+      });
+
+      const messages = await getThread(channel, thread_ts, botUserId);
+
+      const workflowResult = await runSlackWorkflow({
+        jobId,
+        requestId,
+        messages,
+        latestUserMessage: event.text ?? "",
+        slack: {
+          teamId,
+          channelId: channel,
+          threadTs: thread_ts,
+          eventTs: event.ts,
+          eventId: envelope.eventId,
+          userId: event.user ?? "",
         },
-      ],
+      });
+
+      await client.chat.postMessage({
+        channel,
+        thread_ts: thread_ts,
+        text: workflowResult.text,
+        unfurl_links: false,
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: workflowResult.text,
+            },
+          },
+        ],
+      });
     });
 
-    if (messageTs) {
-      if (inProgressReactionActive) {
-        try {
-          await client.reactions.remove({
-            channel,
-            timestamp: messageTs,
-            name: IN_PROGRESS_REACTION,
-          });
-        } catch (error) {
-          console.error("Failed to remove in-progress reaction", error);
-        }
-        inProgressReactionActive = false;
-      }
+    if (!lockResult.ok) {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: thread_ts,
+        text: "別の処理が進行中です。少し間を置いてから再度お試しください。",
+      });
+    }
 
+    if (messageTs && inProgressReactionActive) {
+      try {
+        await client.reactions.remove({
+          channel,
+          timestamp: messageTs,
+          name: IN_PROGRESS_REACTION,
+        });
+      } catch (error) {
+        console.error("Failed to remove in-progress reaction", error);
+      }
+      inProgressReactionActive = false;
+    }
+
+    if (messageTs) {
       try {
         await client.reactions.add({
           channel,
@@ -133,6 +187,7 @@ export async function handleNewAssistantMessage(
     }
     throw error;
   } finally {
+    await clearIdempotency(idempotencyKey);
     await updateStatus("");
   }
 }

@@ -30,8 +30,13 @@ export async function POST(request: Request) {
     const botUserId = await getBotId();
     const event = payload.event as SlackEvent;
 
+    const envelope = {
+      teamId: (payload.team_id ?? (event as { team?: string }).team ?? "") as string,
+      eventId: (payload.event_id ?? `${payload.type}:${event.event_ts}`) as string,
+    };
+
     if (event.type === "app_mention") {
-      waitUntil(handleNewAppMention(event, botUserId));
+      waitUntil(handleNewAppMention(event, botUserId, envelope));
     }
 
     if (event.type === "assistant_thread_started") {
@@ -46,7 +51,7 @@ export async function POST(request: Request) {
       !event.bot_profile &&
       event.bot_id !== botUserId
     ) {
-      waitUntil(handleNewAssistantMessage(event, botUserId));
+      waitUntil(handleNewAssistantMessage(event, botUserId, envelope));
     }
 
     return new Response("Success!", { status: 200 });

@@ -1,24 +1,9 @@
-import { WebClient } from "@slack/web-api";
-import { CoreMessage } from "ai";
 import crypto from "crypto";
+import { CoreMessage } from "ai";
+import { WebClient } from "@slack/web-api";
+import { appConfig } from "./config";
 
-const signingSecret = process.env.SLACK_SIGNING_SECRET;
-
-if (!signingSecret) {
-  throw new Error(
-    "SLACK_SIGNING_SECRET environment variable is required but not set"
-  );
-}
-
-const botToken = process.env.SLACK_BOT_TOKEN;
-
-if (!botToken) {
-  throw new Error(
-    "SLACK_BOT_TOKEN environment variable is required but not set"
-  );
-}
-
-export const client = new WebClient(botToken);
+export const client = new WebClient(appConfig.slack.botToken);
 
 export const IN_PROGRESS_REACTION =
   process.env.SLACK_REACTION_IN_PROGRESS?.trim() || "hourglass_flowing_sand";
@@ -52,7 +37,7 @@ export async function isValidSlackRequest({
 
   const base = `v0:${timestamp}:${rawBody}`;
   const hmac = crypto
-    .createHmac("sha256", signingSecret!)
+    .createHmac("sha256", appConfig.slack.signingSecret)
     .update(base)
     .digest("hex");
   const computedSignature = `v0=${hmac}`;
@@ -85,14 +70,15 @@ export const verifyRequest = async ({
 }) => {
   console.log("Request type:", requestType);
   console.log("Raw body:", rawBody);
-  
+
   if (requestType !== "event_callback") {
     return new Response("Invalid request type", { status: 400 });
   }
-  
-  // Skip signature verification for now to avoid issues
-  // TODO: Re-enable signature verification once working
-  console.log("Skipping signature verification for debugging");
+
+  const valid = await isValidSlackRequest({ request, rawBody });
+  if (!valid) {
+    return new Response("Invalid Slack signature", { status: 401 });
+  }
 };
 
 export const updateStatusUtil = (channel: string, thread_ts: string) => {

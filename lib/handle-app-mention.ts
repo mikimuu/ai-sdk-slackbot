@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { AppMentionEvent } from "@slack/web-api";
 import {
   DONE_REACTION,
@@ -5,118 +6,186 @@ import {
   client,
   getThread,
 } from "./slack-utils";
-import { generateResponse } from "./generate-response";
-
-// Removed updateStatusUtil since we're posting directly as replies
+import {
+  clearIdempotency,
+  ensureIdempotency,
+  withLock,
+} from "./redis";
+import { runSlackWorkflow } from "./generate-response";
+import { executionStore } from "./durable-store";
+import { SlackEnvelope } from "./types";
 
 export async function handleNewAppMention(
   event: AppMentionEvent,
-  botUserId: string
+  botUserId: string,
+  envelope: SlackEnvelope
 ) {
-  console.log("Handling app mention");
-  console.log("Event details:", JSON.stringify(event, null, 2));
-  console.log("Bot user ID:", botUserId);
-
   if (event.bot_id || event.bot_id === botUserId || event.bot_profile) {
-    console.log("Skipping app mention - bot message");
     return;
   }
 
-  const { thread_ts, channel } = event;
-  // Remove the initial "is thinking..." message since we'll post directly as a reply
+  const teamId = envelope.teamId || event.team;
+  if (!teamId) {
+    console.warn("Missing teamId on app mention event");
+    return;
+  }
 
+  const threadTs = event.thread_ts ?? event.ts;
   const reactionTarget = event.ts;
+  const idempotencyKey = `${teamId}:${envelope.eventId}:${event.event_ts}`;
+
+  const shouldProcess = await ensureIdempotency(idempotencyKey);
+  if (!shouldProcess) {
+    console.log("Duplicate Slack event detected; skipping execution");
+    return;
+  }
+
   let inProgressReactionActive = false;
 
   if (reactionTarget) {
     try {
       await client.reactions.add({
-        channel,
+        channel: event.channel,
         timestamp: reactionTarget,
         name: IN_PROGRESS_REACTION,
       });
       inProgressReactionActive = true;
     } catch (error) {
       console.error("Failed to add in-progress reaction", error);
-      // Continue processing even if reaction fails
     }
   }
 
+  const jobId = crypto.randomUUID();
+  const requestId = crypto.randomUUID();
+
   try {
-    let result: string;
+    const lockKey = `thread:${teamId}:${threadTs}`;
+    const lockResult = await withLock(lockKey, async () => {
+      await executionStore.createJob({
+        id: jobId,
+        slackTeamId: teamId,
+        slackChannelId: event.channel,
+        slackThreadTs: threadTs,
+        slackEventId: envelope.eventId,
+        status: "running",
+        lastError: null,
+      });
 
-    if (thread_ts) {
-      const messages = await getThread(channel, thread_ts, botUserId);
-      result = await generateResponse(messages);
-    } else {
-      result = await generateResponse([{ role: "user", content: event.text }]);
-    }
+      const messages = threadTs
+        ? await getThread(event.channel, threadTs, botUserId)
+        : [{ role: "user", content: sanitizeMention(event.text, botUserId) }];
 
-    // Post the response as a reply in the thread
-    await client.chat.postMessage({
-      channel: event.channel,
-      thread_ts: event.ts, // Reply to the original mention
-      text: result,
-      unfurl_links: false,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: result,
-          },
+      const workflowResult = await runSlackWorkflow({
+        jobId,
+        requestId,
+        messages,
+        latestUserMessage: event.text,
+        slack: {
+          teamId,
+          channelId: event.channel,
+          threadTs,
+          eventTs: event.event_ts,
+          eventId: envelope.eventId,
+          userId: event.user,
         },
-      ],
+      });
+
+      await postWorkflowResult(event.channel, threadTs, workflowResult);
     });
 
-    if (reactionTarget) {
-      if (inProgressReactionActive) {
-        try {
-          await client.reactions.remove({
-            channel,
-            timestamp: reactionTarget,
-            name: IN_PROGRESS_REACTION,
-          });
-        } catch (error) {
-          console.error("Failed to remove in-progress reaction", error);
-        }
-        inProgressReactionActive = false;
-      }
+    if (!lockResult.ok) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: "別の処理が進行中のため、少し待ってから再度お試しください。",
+      });
+    }
 
+    if (reactionTarget && inProgressReactionActive) {
+      try {
+        await client.reactions.remove({
+          channel: event.channel,
+          timestamp: reactionTarget,
+          name: IN_PROGRESS_REACTION,
+        });
+      } catch (error) {
+        console.error("Failed to remove in-progress reaction", error);
+      }
+      inProgressReactionActive = false;
+    }
+
+    if (reactionTarget) {
       try {
         await client.reactions.add({
-          channel,
+          channel: event.channel,
           timestamp: reactionTarget,
           name: DONE_REACTION,
         });
       } catch (error) {
         console.error("Failed to add done reaction", error);
-        // Continue even if reaction fails
       }
     }
   } catch (error) {
+    console.error("Error while handling app mention", error);
+
     if (reactionTarget && inProgressReactionActive) {
       try {
         await client.reactions.remove({
-          channel,
+          channel: event.channel,
           timestamp: reactionTarget,
           name: IN_PROGRESS_REACTION,
         });
       } catch (removeError) {
-        console.error(
-          "Failed to remove in-progress reaction after error",
-          removeError
-        );
+        console.error("Failed to remove in-progress reaction after error", removeError);
       }
     }
 
-    // Post error message as a reply
     await client.chat.postMessage({
       channel: event.channel,
-      thread_ts: event.ts,
+      thread_ts: threadTs,
       text: "申し訳ありません。エラーが発生しました。しばらくしてからもう一度お試しください。",
     });
-
-    throw error;
+  } finally {
+    await clearIdempotency(idempotencyKey);
   }
+}
+
+function sanitizeMention(text: string, botUserId: string) {
+  if (!text) return text;
+  return text.replace(`<@${botUserId}>`, "").trim();
+}
+
+async function postWorkflowResult(
+  channel: string,
+  threadTs: string,
+  result: Awaited<ReturnType<typeof runSlackWorkflow>>
+) {
+  await client.chat.postMessage({
+    channel,
+    thread_ts: threadTs,
+    text: result.text,
+    unfurl_links: false,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: result.text,
+        },
+      },
+      ...(result.intent
+        ? [
+            {
+              type: "context",
+              elements: [
+                {
+                  type: "mrkdwn",
+                  text: `Intent: \`${result.intent.action} ${result.intent.object}\` (${result.status})`,
+                },
+              ],
+            },
+          ]
+        : []),
+    ],
+  });
 }

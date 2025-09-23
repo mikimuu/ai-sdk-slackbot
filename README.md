@@ -1,24 +1,38 @@
 # AI SDK Slackbot
+ I’ll suggest clear, concise next actions like setting up the Zapier environment with API keys, verifying the SSE connection, updating fallback or
+  budget logic, running integration and performance tests, and validating connector functionality locally to help the user move forward effectively.
 
+> - Zapier 側で MCP エンドポイントと API キーを確認し、ZAPIER_MCP_URL / ZAPIER_MCP_API_KEY を Vercel 環境変数に投入して本番・ステージングに反映させま
+  しょう。
+  - ローカルかステージングで listZapierTools() を一度叩き、登録された Zapier ツール名が取得できるかを確認。そのまま executeZapierTool が成功するか簡単な
+  Zap を作って疎通テストを。
+  - Slack から「Zapier で○○を実行して」と指示するシナリオを試し、Intent 解析→Zapier 実行→サマリー返信の流れが通るか SLO（ACK <3s など）もチェック。
+  - 予算超過ハンドリングを検証するために toolBudget.maxZapCalls / maxHsReads を意図的に小さく設定し、制限に引っかかった場合のエラーメッセージが想定どお
+  りか確認。
+  - その結果を踏まえて Zapier 側の Runbook と運用ルール（失敗時の再実行・フォールバック条件）を整理し、README か社内ドキュメントに追記すると安心です。
+  - 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fnicoalbanese%2Fai-sdk-slackbot&env=SLACK_BOT_TOKEN,SLACK_SIGNING_SECRET,OPENAI_API_KEY&envDescription=API%20keys%20needed%20for%20application&envLink=https%3A%2F%2Fgithub.com%2Fnicoalbanese%2Fai-sdk-slackbot%3Ftab%3Dreadme-ov-file%234-set-environment-variables&project-name=ai-sdk-slackbot)
 
 An AI-powered chatbot for Slack powered by the [AI SDK by Vercel](https://sdk.vercel.ai/docs).
 
 ## Features
 
-- Integrates with [Slack's API](https://api.slack.com) for easy Slack communication
-- Use any LLM with the AI SDK ([easily switch between providers](https://sdk.vercel.ai/providers/ai-sdk-providers))
-- Works both with app mentions and as an assistant in direct messages
-- Maintains conversation context within both threads and direct messages
-- HR-focused onboarding that helps recruiters polish job descriptions, outreach messages, and interview plans
-- Adds configurable Slack reactions (defaults to `:hourglass_flowing_sand:` while processing, `:check_mark_button:` when complete)
-- Easily extensible architecture to add custom tools (e.g., ATS or CRM integrations)
+- Integrates with [Slack's API](https://api.slack.com) for reliable event ingestion and response streaming
+- Uses [Vercel AI SDK](https://sdk.vercel.ai) multi-step control to extract intents, execute tools, and summarize outcomes
+- Executes HubSpot CRM reads and writes via the official SDK with schema validation and locking
+- Falls back to Zapier MCP tools for bulk/no-code automations with budget tracking
+- Persists durable execution checkpoints to Postgres and uses Redis for idempotency + locking
+- Streams progress via Slack reactions, assistant status updates, and audit-friendly thread context blocks
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+ installed
 - Slack workspace with admin privileges
 - [OpenAI API key](https://platform.openai.com/api-keys)
+- HubSpot private app token with CRM scope
+- Zapier MCP endpoint + API key for fallback automations
+- HTTP-accessible Redis (e.g. [Upstash](https://upstash.com)) for locks & caching
+- Postgres instance for durable execution state (e.g. [Vercel Postgres](https://vercel.com/postgres))
 - A server or hosting platform (e.g., [Vercel](https://vercel.com)) to deploy the bot
 
 ## Setup
@@ -77,12 +91,32 @@ Create a `.env` file in the root of your project with the following:
 # Slack Credentials
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
+SLACK_APP_ID=your-slack-app-id
 
 # OpenAI Credentials
 OPENAI_API_KEY=your-openai-api-key
 
-# Optional: Slack reaction names
-SLACK_REACTION_IN_PROGRESS=砂時計
+# HubSpot SDK
+HUBSPOT_PRIVATE_APP_TOKEN=pat-xxx
+
+# Redis (idempotency, locks, cache)
+REDIS_REST_URL=https://<your-upstash-url>
+REDIS_REST_TOKEN=your-upstash-token
+REDIS_PREFIX=slack-hubspot-agent
+
+# Durable Execution Store
+POSTGRES_URL=postgres://user:password@host:5432/dbname
+
+# Zapier MCP Gateway
+ZAPIER_MCP_URL=https://mcp.zapier.com/sse
+ZAPIER_MCP_API_KEY=your-zapier-mcp-api-key
+
+# Optional overrides
+AI_SUPERVISOR_MODEL=openai:gpt-5-reasoning-preview
+AI_INTENT_MODEL=openai:gpt-4o-mini
+AI_EXECUTOR_MODEL=openai:gpt-4o
+AI_TELEMETRY_ENABLED=true
+SLACK_REACTION_IN_PROGRESS=hourglass_flowing_sand
 SLACK_REACTION_DONE=check_mark_button
 ```
 
