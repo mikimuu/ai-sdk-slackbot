@@ -15,7 +15,7 @@ export async function assistantThreadMessage(
   await client.chat.postMessage({
     channel: channel_id,
     thread_ts: thread_ts,
-    text: "Hello, I'm an AI assistant built with the AI SDK by Vercel!",
+    text: "こんにちは、リクルーターボットです。採用や人材紹介に関するご相談をお手伝いします。",
   });
 
   await client.assistant.threads.setSuggestedPrompts({
@@ -23,12 +23,12 @@ export async function assistantThreadMessage(
     thread_ts: thread_ts,
     prompts: [
       {
-        title: "Get the weather",
-        message: "What is the current weather in London?",
+        title: "求人票のブラッシュアップ",
+        message: "シニアバックエンドエンジニア向けの求人票を改善して。",
       },
       {
-        title: "Get the news",
-        message: "What is the latest Premier League news from the BBC?",
+        title: "候補者への初回メッセージ",
+        message: "カスタマーサクセスマネージャー候補に送るスカウト文面を下書きして。",
       },
     ],
   });
@@ -51,7 +51,7 @@ export async function handleNewAssistantMessage(
   await updateStatus("is thinking...");
 
   const messages = await getThread(channel, thread_ts, botUserId);
-  const result = await generateResponse(messages, updateStatus);
+  const result = await generateResponse(messages);
 
   await client.chat.postMessage({
     channel: channel,

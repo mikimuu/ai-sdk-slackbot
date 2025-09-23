@@ -15,7 +15,6 @@
     "@slack/web-api": "^7.9.3",
     "@vercel/functions": "^2.0.0",
     "ai": "^4.1.46",
-    "exa-js": "^1.4.10",
     "zod": "^3.24.2"
   },
   "devDependencies": {

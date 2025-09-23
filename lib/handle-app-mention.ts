@@ -40,13 +40,10 @@ export async function handleNewAppMention(
 
   if (thread_ts) {
     const messages = await getThread(channel, thread_ts, botUserId);
-    const result = await generateResponse(messages, updateMessage);
+    const result = await generateResponse(messages);
     await updateMessage(result);
   } else {
-    const result = await generateResponse(
-      [{ role: "user", content: event.text }],
-      updateMessage,
-    );
+    const result = await generateResponse([{ role: "user", content: event.text }]);
     await updateMessage(result);
   }
 }

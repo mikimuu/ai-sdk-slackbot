@@ -20,9 +20,6 @@ importers:
       ai:
         specifier: ^4.1.46
         version: 4.1.47(react@19.0.0)(zod@3.24.2)
-      exa-js:
-        specifier: ^1.4.10
-        version: 1.4.10
       zod:
         specifier: ^3.24.2
         version: 3.24.2
@@ -187,9 +184,6 @@ packages:
   eventsource-parser@3.0.0:
     resolution: {integrity: sha512-T1C0XCUimhxVQzW4zFipdx0SficT651NnkR0ZSH3yQwh+mFMdLfgjABVi4YtMTtaL4s168593DaoaRLMqryavA==}
     engines: {node: '>=18.0.0'}
-
-  exa-js@1.4.10:
-    resolution: {integrity: sha512-rffYWPU568gOiYmsHW3L5J6atoNfLJTrtAk/DAKyPuGtdDXrE9fsSfltP1X1pNVtLTsz8DIyhUHOXErueNLJrQ==}
 
   follow-redirects@1.15.9:
     resolution: {integrity: sha512-gew4GsXizNgdoRyqmyfMHyAmXsZDk6mHkSxZFCzW9gwlbtOW44CDtYavM+y+72qD/Vq2l550kMF52DT8fOLJqQ==}
@@ -488,13 +482,6 @@ snapshots:
   eventemitter3@5.0.1: {}
 
   eventsource-parser@3.0.0: {}
-
-  exa-js@1.4.10:
-    dependencies:
-      cross-fetch: 4.1.0
-      dotenv: 16.4.7
-    transitivePeerDependencies:
-      - encoding
 
   follow-redirects@1.15.9: {}
 
