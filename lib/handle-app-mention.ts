@@ -11,11 +11,14 @@ import { generateResponse } from "./generate-response";
 
 export async function handleNewAppMention(
   event: AppMentionEvent,
-  botUserId: string,
+  botUserId: string
 ) {
   console.log("Handling app mention");
+  console.log("Event details:", JSON.stringify(event, null, 2));
+  console.log("Bot user ID:", botUserId);
+  
   if (event.bot_id || event.bot_id === botUserId || event.bot_profile) {
-    console.log("Skipping app mention");
+    console.log("Skipping app mention - bot message");
     return;
   }
 
@@ -100,18 +103,18 @@ export async function handleNewAppMention(
       } catch (removeError) {
         console.error(
           "Failed to remove in-progress reaction after error",
-          removeError,
+          removeError
         );
       }
     }
-    
+
     // Post error message as a reply
     await client.chat.postMessage({
       channel: event.channel,
       thread_ts: event.ts,
       text: "申し訳ありません。エラーが発生しました。しばらくしてからもう一度お試しください。",
     });
-    
+
     throw error;
   }
 }
