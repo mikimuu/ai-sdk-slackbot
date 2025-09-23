@@ -56,12 +56,22 @@ export async function isValidSlackRequest({
     .update(base)
     .digest("hex");
   const computedSignature = `v0=${hmac}`;
+  
+  // Debug logging
+  console.log('Computed signature:', computedSignature);
+  console.log('Slack signature:', slackSignature);
 
   // Prevent timing attacks
-  return crypto.timingSafeEqual(
-    Buffer.from(computedSignature),
-    Buffer.from(slackSignature)
-  );
+  const computedBuffer = Buffer.from(computedSignature);
+  const slackBuffer = Buffer.from(slackSignature);
+  
+  // Ensure both buffers have the same length
+  if (computedBuffer.length !== slackBuffer.length) {
+    console.log('Signature length mismatch');
+    return false;
+  }
+  
+  return crypto.timingSafeEqual(computedBuffer, slackBuffer);
 }
 
 export const verifyRequest = async ({
