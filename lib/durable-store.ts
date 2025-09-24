@@ -194,8 +194,68 @@ class DurableExecutionStore {
   }
 }
 
-if (!appConfig.postgres.url) {
-  throw new Error("POSTGRES_URL is required for durable execution store");
+class InMemoryExecutionStore {
+  private jobs = new Map<string, JobRecord>();
+  private steps = new Map<string, StepRecord>();
+  private toolCalls = new Map<string, ToolCallRecord>();
+
+  async createJob(record: Omit<JobRecord, "createdAt" | "updatedAt">) {
+    const now = new Date();
+    this.jobs.set(record.id, {
+      ...record,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  async updateJobStatus(id: string, status: JobStatus, lastError?: string | null) {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    job.status = status;
+    job.lastError = lastError ?? null;
+    job.updatedAt = new Date();
+  }
+
+  async appendStep(record: Omit<StepRecord, "createdAt" | "updatedAt">) {
+    const now = new Date();
+    const step: StepRecord = {
+      ...record,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.steps.set(record.id, step);
+  }
+
+  async appendToolCall(record: Omit<ToolCallRecord, "createdAt">) {
+    const now = new Date();
+    const call: ToolCallRecord = {
+      ...record,
+      createdAt: now,
+    };
+    this.toolCalls.set(record.id, call);
+  }
+
+  async latestStep(jobId: string) {
+    const steps = Array.from(this.steps.values()).filter(
+      (step) => step.jobId === jobId
+    );
+    if (steps.length === 0) return undefined;
+    return steps.sort((a, b) => b.sequence - a.sequence)[0];
+  }
+
+  async loadJob(jobId: string) {
+    return this.jobs.get(jobId);
+  }
 }
 
-export const executionStore = new DurableExecutionStore();
+let warnedPostgresDisabled = false;
+const postgresEnabled = Boolean(appConfig.postgres.url);
+
+if (!postgresEnabled && !warnedPostgresDisabled) {
+  console.warn("Postgres が未設定のため、durable execution store をメモリで代替します。");
+  warnedPostgresDisabled = true;
+}
+
+export const executionStore = postgresEnabled
+  ? new DurableExecutionStore()
+  : new InMemoryExecutionStore();

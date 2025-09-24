@@ -4,9 +4,11 @@ import { Intent } from "./intent";
 import { appConfig } from "./config";
 import { cacheJson, getCachedJson } from "./redis";
 
-const hubspotClient = new Hubspot.Client({
-  accessToken: appConfig.hubspot.accessToken,
-});
+const hubspotClient = appConfig.hubspot.accessToken
+  ? new Hubspot.Client({
+      accessToken: appConfig.hubspot.accessToken,
+    })
+  : null;
 
 type HubSpotObjectType = Intent["object"];
 
@@ -32,32 +34,40 @@ const objectMap: Record<HubSpotObjectType, string> = {
   custom: "custom",
 };
 
+function requireHubSpotClient() {
+  if (!hubspotClient) {
+    throw new Error("HubSpot の認証情報が設定されていません。");
+  }
+  return hubspotClient;
+}
+
 function getObjectApis(object: HubSpotObjectType): HubSpotObjectHandlers {
+  const client = requireHubSpotClient();
   switch (object) {
     case "contact":
       return {
-        basicApi: hubspotClient.crm.contacts.basicApi,
-        searchApi: hubspotClient.crm.contacts.searchApi,
+        basicApi: client.crm.contacts.basicApi,
+        searchApi: client.crm.contacts.searchApi,
       };
     case "company":
       return {
-        basicApi: hubspotClient.crm.companies.basicApi,
-        searchApi: hubspotClient.crm.companies.searchApi,
+        basicApi: client.crm.companies.basicApi,
+        searchApi: client.crm.companies.searchApi,
       };
     case "deal":
       return {
-        basicApi: hubspotClient.crm.deals.basicApi,
-        searchApi: hubspotClient.crm.deals.searchApi,
+        basicApi: client.crm.deals.basicApi,
+        searchApi: client.crm.deals.searchApi,
       };
     case "ticket":
       return {
-        basicApi: hubspotClient.crm.tickets.basicApi,
-        searchApi: hubspotClient.crm.tickets.searchApi,
+        basicApi: client.crm.tickets.basicApi,
+        searchApi: client.crm.tickets.searchApi,
       };
     case "custom":
       return {
-        basicApi: hubspotClient.crm.objects.basicApi,
-        searchApi: hubspotClient.crm.objects.searchApi,
+        basicApi: client.crm.objects.basicApi,
+        searchApi: client.crm.objects.searchApi,
       };
     default:
       throw new Error(`Unsupported HubSpot object: ${object}`);
@@ -69,9 +79,8 @@ async function fetchProperties(object: HubSpotObjectType): Promise<HubSpotProper
   const cached = await getCachedJson<HubSpotProperty[]>(cacheKey);
   if (cached) return cached;
 
-  const properties = await hubspotClient.crm.properties.coreApi.getAll(
-    objectMap[object]
-  );
+  const client = requireHubSpotClient();
+  const properties = await client.crm.properties.coreApi.getAll(objectMap[object]);
   const normalized = properties.results.map((property: any) => ({
     name: property.name,
     label: property.label,
@@ -86,6 +95,12 @@ async function fetchProperties(object: HubSpotObjectType): Promise<HubSpotProper
 }
 
 export async function validateIntentAgainstHubSpot(intent: Intent) {
+  if (!hubspotClient) {
+    return {
+      ok: false,
+      errors: ["HubSpot Private App Token が設定されていません"],
+    };
+  }
   const properties = await fetchProperties(intent.object);
   const propertyNames = new Set(properties.map((property) => property.name));
   const errors: string[] = [];
@@ -157,6 +172,9 @@ export async function executeIntentWithHubSpot(
   intent: Intent,
   options: HubSpotExecutionOptions
 ) {
+  if (!hubspotClient) {
+    throw new Error("HubSpot Private App Token が設定されていません");
+  }
   const apis = getObjectApis(intent.object);
 
   switch (intent.action) {

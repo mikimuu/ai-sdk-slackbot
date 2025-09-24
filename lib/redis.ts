@@ -2,10 +2,21 @@ import crypto from "crypto";
 import { Redis } from "@upstash/redis";
 import { appConfig } from "./config";
 
-const redis = new Redis({
-  url: appConfig.redis.url,
-  token: appConfig.redis.token,
-});
+const redisEnabled = Boolean(appConfig.redis.url && appConfig.redis.token);
+const redis = redisEnabled
+  ? new Redis({
+      url: appConfig.redis.url!,
+      token: appConfig.redis.token!,
+    })
+  : null;
+
+let warnedRedisDisabled = false;
+const warnIfDisabled = () => {
+  if (!redisEnabled && !warnedRedisDisabled) {
+    console.warn("Redis が未設定のため、idempotency / ロック機構を無効化しています。");
+    warnedRedisDisabled = true;
+  }
+};
 
 const namespace = (suffix: string) => `${appConfig.redis.prefix}:${suffix}`;
 
@@ -13,6 +24,10 @@ export async function ensureIdempotency(
   key: string,
   ttlSeconds = 60 * 60 * 24
 ) {
+  if (!redis) {
+    warnIfDisabled();
+    return true;
+  }
   const namespacedKey = namespace(`idempotency:${key}`);
   const result = await redis.set(namespacedKey, "1", {
     nx: true,
@@ -22,6 +37,10 @@ export async function ensureIdempotency(
 }
 
 export async function clearIdempotency(key: string) {
+  if (!redis) {
+    warnIfDisabled();
+    return;
+  }
   const namespacedKey = namespace(`idempotency:${key}`);
   await redis.del(namespacedKey);
 }
@@ -48,6 +67,11 @@ export async function withLock<T>(
   const token = crypto.randomUUID();
   const lockKey = namespace(`lock:${lockName}`);
 
+  if (!redis) {
+    warnIfDisabled();
+    return { ok: true, value: await executor() };
+  }
+
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const acquired = await redis.set(lockKey, token, {
       nx: true,
@@ -70,6 +94,7 @@ export async function withLock<T>(
 }
 
 async function releaseLock(lockKey: string, token: string) {
+  if (!redis) return;
   const script = `
     if redis.call('get', KEYS[1]) == ARGV[1] then
       return redis.call('del', KEYS[1])
@@ -85,6 +110,10 @@ const sleep = (durationMs: number) =>
   new Promise((resolve) => setTimeout(resolve, durationMs));
 
 export async function getCachedJson<T>(key: string): Promise<T | null> {
+  if (!redis) {
+    warnIfDisabled();
+    return null;
+  }
   const value = await redis.get<string>(namespace(`cache:${key}`));
   if (!value) return null;
   try {
@@ -100,6 +129,10 @@ export async function cacheJson(
   value: unknown,
   ttlSeconds = 60 * 10
 ) {
+  if (!redis) {
+    warnIfDisabled();
+    return;
+  }
   await redis.set(namespace(`cache:${key}`), JSON.stringify(value), {
     ex: ttlSeconds,
   });

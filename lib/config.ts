@@ -1,14 +1,17 @@
 import { z } from "zod";
 
-const RedisSchema = z
-  .object({
-    url: z.string().url(),
-    token: z.string(),
-    prefix: z.string().default("slack-hubspot-agent"),
-  })
-  .refine((value) => value.url.length > 0 && value.token.length > 0, {
-    message: "REDIS_URL and REDIS_TOKEN are required",
-  });
+const RedisSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  token: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  prefix: z.string().default("slack-hubspot-agent"),
+});
 
 const SlackSchema = z.object({
   signingSecret: z.string(),
@@ -17,7 +20,10 @@ const SlackSchema = z.object({
 });
 
 const HubSpotSchema = z.object({
-  accessToken: z.string().min(1, "HUBSPOT_PRIVATE_APP_TOKEN is required"),
+  accessToken: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
 });
 
 const ZapierSchema = z.object({
@@ -29,7 +35,11 @@ const ZapierSchema = z.object({
 });
 
 const PostgresSchema = z.object({
-  url: z.string().url(),
+  url: z
+    .string()
+    .url()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
 });
 
 const AiSchema = z.object({
