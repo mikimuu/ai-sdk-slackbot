@@ -1,5 +1,4 @@
 import Hubspot from "@hubspot/api-client";
-import pRetry from "p-retry";
 import { Intent } from "./intent";
 import { appConfig } from "./config";
 import { cacheJson, getCachedJson } from "./redis";
@@ -183,7 +182,7 @@ export async function executeIntentWithHubSpot(
         throw new Error(`Search API not available for object ${intent.object}`);
       }
 
-      return pRetry(
+      return runWithRetry(
         () =>
           apis.searchApi.doSearch({
             limit: intent.limit,
@@ -199,7 +198,7 @@ export async function executeIntentWithHubSpot(
       );
 
     case "create":
-      return pRetry(
+      return runWithRetry(
         () =>
           apis.basicApi.create(
             intent.object === "custom"
@@ -219,7 +218,7 @@ export async function executeIntentWithHubSpot(
       if (!recordId) throw new Error("Update intent requires id field");
 
       const { id, recordId: _recordId, ...properties } = intent.fields;
-      return pRetry(
+      return runWithRetry(
         () => apis.basicApi.update(recordId, { properties }),
         {
           retries: 3,
@@ -231,10 +230,10 @@ export async function executeIntentWithHubSpot(
     case "delete": {
       const recordId = String(intent.fields.id ?? intent.fields.recordId);
       if (!recordId) throw new Error("Delete intent requires id field");
-      return pRetry(
-        () => apis.basicApi.archive(recordId),
-        { retries: 3, minTimeout: 500 }
-      );
+      return runWithRetry(() => apis.basicApi.archive(recordId), {
+        retries: 3,
+        minTimeout: 500,
+      });
     }
 
     default:
@@ -243,3 +242,34 @@ export async function executeIntentWithHubSpot(
 }
 
 export { hubspotClient };
+
+type RetryOptions = {
+  retries?: number;
+  minTimeout?: number;
+  factor?: number;
+};
+
+async function runWithRetry<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const retries = options.retries ?? 3;
+  const minTimeout = options.minTimeout ?? 500;
+  const factor = options.factor ?? 2;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+      const delay = minTimeout * Math.pow(factor, attempt);
+      await sleep(delay);
+    }
+  }
+
+  throw new Error("Retry attempts exhausted");
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
