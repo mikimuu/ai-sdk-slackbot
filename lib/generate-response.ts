@@ -400,30 +400,30 @@ export async function runSlackWorkflow(
       "review",
       { intent, executionChannel, executionResult },
       async () => {
-      const { text } = await generateText({
-        model: openai(appConfig.ai.executorModel),
-        system:
-          "You are a Slack assistant summarizing HubSpot or Zapier actions in Japanese. " +
-          "Use short paragraphs or bullet points. Include concrete HubSpot IDs when available. " +
-          "Do not mention internal policies.",
-        messages: [
-          {
-            role: "user",
-            content: `Intent: ${JSON.stringify(intent, null, 2)}`,
-          },
-          {
-            role: "user",
-            content: `Result: ${JSON.stringify(executionResult).slice(0, 3500)}`,
-          },
-        ],
-        maxTokens: 800,
-        maxSteps: 4,
-        experimental_telemetry: telemetryFor("review", {
-          job_id: input.jobId,
-          request_id: input.requestId,
-          execution_channel: executionChannel,
-        }),
-      });
+        const { text } = await generateText({
+          model: openai(appConfig.ai.executorModel),
+          system:
+            "You are a Slack assistant summarizing HubSpot or Zapier actions in Japanese. " +
+            "Use short paragraphs or bullet points. Include concrete HubSpot IDs when available. " +
+            "Do not mention internal policies.",
+          messages: [
+            {
+              role: "user",
+              content: `Intent: ${JSON.stringify(intent, null, 2)}`,
+            },
+            {
+              role: "user",
+              content: `Result: ${JSON.stringify(executionResult).slice(0, 3500)}`,
+            },
+          ],
+          maxTokens: 800,
+          maxSteps: 4,
+          experimental_telemetry: telemetryFor("review", {
+            job_id: input.jobId,
+            request_id: input.requestId,
+            execution_channel: executionChannel,
+          }),
+        });
 
         return formatSlackText(text);
       }
