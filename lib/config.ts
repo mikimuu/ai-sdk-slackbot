@@ -22,7 +22,10 @@ const HubSpotSchema = z.object({
 
 const ZapierSchema = z.object({
   mcpUrl: z.string().url(),
-  apiKey: z.string().min(1, "ZAPIER_MCP_API_KEY is required"),
+  apiKey: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim().length > 0 ? value : undefined)),
 });
 
 const PostgresSchema = z.object({

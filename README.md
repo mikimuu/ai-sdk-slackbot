@@ -122,6 +122,8 @@ SLACK_REACTION_DONE=check_mark_button
 
 Replace the placeholder values with your actual tokens.
 
+> If Zapier only provides a single TypeScript MCP server URL (e.g. `https://mcp.zapier.com/api/mcp/.../mcp`) and no separate API key, set `ZAPIER_MCP_URL` to that exact URL and leave `ZAPIER_MCP_API_KEY` unset. The client will connect over SSE without sending an Authorization header in that case.
+
 ## Local Development
 
 Use the [Vercel CLI](https://vercel.com/docs/cli) and [untun](https://github.com/unjs/untun) to test out this project locally:
