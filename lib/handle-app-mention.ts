@@ -1,5 +1,12 @@
 import crypto from "crypto";
-import { AppMentionEvent } from "@slack/web-api";
+import type {
+  AppMentionEvent,
+  ContextBlock,
+  KnownBlock,
+  MrkdwnElement,
+  SectionBlock,
+} from "@slack/web-api";
+import type { CoreMessage, CoreUserMessage } from "ai";
 import {
   DONE_REACTION,
   IN_PROGRESS_REACTION,
@@ -25,14 +32,25 @@ export async function handleNewAppMention(
   }
 
   const teamId = envelope.teamId || event.team;
+  const userId = event.user;
+  if (!userId) {
+    console.warn("Missing user on app mention event");
+    return;
+  }
   if (!teamId) {
     console.warn("Missing teamId on app mention event");
     return;
   }
 
-  const threadTs = event.thread_ts ?? event.ts;
-  const reactionTarget = event.ts;
-  const idempotencyKey = `${teamId}:${envelope.eventId}:${event.event_ts}`;
+  const rawThreadTs = event.thread_ts ?? event.ts;
+  if (!rawThreadTs) {
+    console.warn("Missing thread timestamp on app mention event");
+    return;
+  }
+  const threadTs = rawThreadTs;
+  const reactionTarget = event.ts ?? threadTs;
+  const eventTimestamp = event.event_ts ?? event.ts ?? threadTs;
+  const idempotencyKey = `${teamId}:${envelope.eventId}:${eventTimestamp}`;
 
   const shouldProcess = await ensureIdempotency(idempotencyKey);
   if (!shouldProcess) {
@@ -71,22 +89,27 @@ export async function handleNewAppMention(
         lastError: null,
       });
 
-      const messages = threadTs
+      const messages: CoreMessage[] = threadTs
         ? await getThread(event.channel, threadTs, botUserId)
-        : [{ role: "user", content: sanitizeMention(event.text, botUserId) }];
+        : [
+            {
+              role: "user",
+              content: sanitizeMention(event.text ?? "", botUserId),
+            } as CoreUserMessage,
+          ];
 
       const workflowResult = await runSlackWorkflow({
         jobId,
         requestId,
         messages,
-        latestUserMessage: event.text,
+        latestUserMessage: event.text ?? "",
         slack: {
           teamId,
           channelId: event.channel,
           threadTs,
-          eventTs: event.event_ts,
+          eventTs: eventTimestamp,
           eventId: envelope.eventId,
-          userId: event.user,
+          userId,
         },
       });
 
@@ -165,27 +188,34 @@ async function postWorkflowResult(
     thread_ts: threadTs,
     text: result.text,
     unfurl_links: false,
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: result.text,
-        },
-      },
-      ...(result.intent
-        ? [
-            {
-              type: "context",
-              elements: [
-                {
-                  type: "mrkdwn",
-                  text: `Intent: \`${result.intent.action} ${result.intent.object}\` (${result.status})`,
-                },
-              ],
-            },
-          ]
-        : []),
-    ],
+    blocks: buildResultBlocks(result),
   });
+}
+
+function buildResultBlocks(result: Awaited<ReturnType<typeof runSlackWorkflow>>) {
+  const sectionBlock: SectionBlock = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: result.text,
+    },
+  };
+
+  const blocks: KnownBlock[] = [sectionBlock];
+
+  if (result.intent) {
+    const contextBlock: ContextBlock = {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Intent: \`${result.intent.action} ${result.intent.object}\` (${result.status})`,
+        } as MrkdwnElement,
+      ],
+    };
+
+    blocks.push(contextBlock);
+  }
+
+  return blocks;
 }

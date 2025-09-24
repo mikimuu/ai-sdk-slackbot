@@ -31,9 +31,6 @@ async function getClient() {
     );
 
     const transport = new SSEClientTransport(new URL(appConfig.zapier.mcpUrl), {
-      eventSourceInit: {
-        headers,
-      },
       requestInit: {
         headers,
       },

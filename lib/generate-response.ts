@@ -174,9 +174,10 @@ export async function runSlackWorkflow(
 
   try {
     const intentStep = await runStep("intent", { messages: input.messages }, async () => {
-      const { object } = await generateObject({
+      const { object } = await generateObject<Intent>({
         model: openai(appConfig.ai.intentModel),
         schema: IntentSchema,
+        maxTokens: 800,
         system:
           "You are an intent extraction controller for a Slack HubSpot operations bot. " +
           "Only output JSON matching the provided schema. " +
@@ -184,17 +185,10 @@ export async function runSlackWorkflow(
           "Include fields.toolName when toolHint is 'zapier'. " +
           "Never fabricate HubSpot property names. Use the user's language to infer.",
         messages: input.messages,
-        maxSteps: 3,
         experimental_telemetry: telemetryFor("intent", {
           job_id: input.jobId,
           request_id: input.requestId,
           slack_channel: input.slack.channelId,
-        }),
-        prepareStep: ({ step }) => ({
-          model: openai(appConfig.ai.intentModel, {
-            reasoning: { effort: step === 1 ? "medium" : "low" },
-            maxCompletionTokens: 800,
-          }),
         }),
       });
 
@@ -406,35 +400,30 @@ export async function runSlackWorkflow(
       "review",
       { intent, executionChannel, executionResult },
       async () => {
-        const { text } = await generateText({
-          model: openai(appConfig.ai.executorModel),
-          system:
-            "You are a Slack assistant summarizing HubSpot or Zapier actions in Japanese. " +
-            "Use short paragraphs or bullet points. Include concrete HubSpot IDs when available. " +
-            "Do not mention internal policies.",
-          messages: [
-            {
-              role: "user",
-              content: `Intent: ${JSON.stringify(intent, null, 2)}`,
-            },
-            {
-              role: "user",
-              content: `Result: ${JSON.stringify(executionResult).slice(0, 3500)}`,
-            },
-          ],
-          maxSteps: 4,
-          experimental_telemetry: telemetryFor("review", {
-            job_id: input.jobId,
-            request_id: input.requestId,
-            execution_channel: executionChannel,
-          }),
-          prepareStep: ({ step }) => ({
-            model: openai(appConfig.ai.executorModel, {
-              reasoning: { effort: step === 1 ? "medium" : "low" },
-              maxCompletionTokens: 800,
-            }),
-          }),
-        });
+      const { text } = await generateText({
+        model: openai(appConfig.ai.executorModel),
+        system:
+          "You are a Slack assistant summarizing HubSpot or Zapier actions in Japanese. " +
+          "Use short paragraphs or bullet points. Include concrete HubSpot IDs when available. " +
+          "Do not mention internal policies.",
+        messages: [
+          {
+            role: "user",
+            content: `Intent: ${JSON.stringify(intent, null, 2)}`,
+          },
+          {
+            role: "user",
+            content: `Result: ${JSON.stringify(executionResult).slice(0, 3500)}`,
+          },
+        ],
+        maxTokens: 800,
+        maxSteps: 4,
+        experimental_telemetry: telemetryFor("review", {
+          job_id: input.jobId,
+          request_id: input.requestId,
+          execution_channel: executionChannel,
+        }),
+      });
 
         return formatSlackText(text);
       }

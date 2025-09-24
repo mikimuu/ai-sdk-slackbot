@@ -29,10 +29,21 @@ export async function POST(request: Request) {
 
     const botUserId = await getBotId();
     const event = payload.event as SlackEvent;
+    const teamIdCandidate =
+      payload.team_id ?? (event as { team?: string }).team ?? "";
+    const eventTimestamp =
+      (event as { event_ts?: string }).event_ts ??
+      (typeof payload.event_time === "number"
+        ? String(payload.event_time)
+        : payload.event_time ?? String(Date.now()));
 
     const envelope = {
-      teamId: (payload.team_id ?? (event as { team?: string }).team ?? "") as string,
-      eventId: (payload.event_id ?? `${payload.type}:${event.event_ts}`) as string,
+      teamId: teamIdCandidate as string,
+      eventId: (
+        payload.event_id && typeof payload.event_id === "string"
+          ? payload.event_id
+          : `${payload.type}:${eventTimestamp}`
+      ) as string,
     };
 
     if (event.type === "app_mention") {

@@ -4,7 +4,7 @@ import { Intent } from "./intent";
 import { appConfig } from "./config";
 import { cacheJson, getCachedJson } from "./redis";
 
-const hubspotClient = new Hubspot({
+const hubspotClient = new Hubspot.Client({
   accessToken: appConfig.hubspot.accessToken,
 });
 
