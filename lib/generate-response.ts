@@ -7,14 +7,9 @@ import {
   IntentGuardrails,
   IntentSchema,
 } from "./intent";
-import {
-  executeIntentWithHubSpot,
-  validateIntentAgainstHubSpot,
-} from "./hubspot";
 import { executeZapierTool } from "./zapier-mcp";
 import { executionStore } from "./durable-store";
 import { telemetryFor } from "./telemetry";
-import { withLock } from "./redis";
 
 export type SlackWorkflowInput = {
   jobId: string;
@@ -35,7 +30,7 @@ export type SlackWorkflowResult = {
   status: "completed" | "action_required" | "failed";
   text: string;
   intent?: Intent;
-  tool?: "hubspot" | "zapier";
+  tool?: "zapier";
   rawResult?: unknown;
   issues?: string[];
 };
@@ -63,48 +58,28 @@ class BudgetExceededError extends Error {
   }
 }
 
-function determineExecutionChannel(intent: Intent): "hubspot" | "zapier" {
+function ensureZapierBudget(intent: Intent) {
   const { toolBudget } = intent;
+  if (toolBudget.maxZapCalls <= 0) {
+    throw new BudgetExceededError(
+      "Zapier MCP の利用上限を超えているため実行できません。"
+    );
+  }
+}
 
-  const canUseHubSpot =
-    intent.action === "read"
-      ? intent.limit <= toolBudget.maxHsReads
-      : toolBudget.maxHsWrites > 0;
-  const canUseZapier = toolBudget.maxZapCalls > 0;
+function validateIntentForZapier(intent: Intent) {
+  const errors: string[] = [];
+  const fields = intent.fields as Record<string, unknown>;
+  const toolName = String(fields.toolName ?? fields.zapierTool ?? "").trim();
 
-  if (intent.toolHint === "zapier") {
-    if (!canUseZapier) {
-      throw new BudgetExceededError(
-        "Zapier MCP の利用上限を超えているため実行できません。"
-      );
-    }
-    return "zapier";
+  if (!toolName) {
+    errors.push("fields.toolName (または zapierTool) を指定してください");
   }
 
-  if (intent.toolHint === "sdk") {
-    if (!canUseHubSpot) {
-      throw new BudgetExceededError(
-        "HubSpot SDK の許容回数を超えているため実行できません。"
-      );
-    }
-    return "hubspot";
-  }
-
-  if (intent.action === "report" || intent.limit > toolBudget.maxHsReads) {
-    if (!canUseZapier) {
-      throw new BudgetExceededError(
-        "Zapier MCP の予算が不足しています。limit を下げるか、工具設定を変更してください。"
-      );
-    }
-    return "zapier";
-  }
-
-  if (canUseHubSpot) return "hubspot";
-  if (canUseZapier) return "zapier";
-
-  throw new BudgetExceededError(
-    "指定されたツール予算内で実行できません。制限を緩和するか、条件を調整してください。"
-  );
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
 }
 
 export async function runSlackWorkflow(
@@ -179,11 +154,10 @@ export async function runSlackWorkflow(
         schema: IntentSchema,
         maxTokens: 800,
         system:
-          "You are an intent extraction controller for a Slack HubSpot operations bot. " +
+          "You are an intent extraction controller for a Slack HubSpot operations bot that executes all actions via Zapier MCP. " +
           "Only output JSON matching the provided schema. " +
-          "Prefer HubSpot SDK when actions are low latency or transactional. " +
-          "Include fields.toolName when toolHint is 'zapier'. " +
-          "Never fabricate HubSpot property names. Use the user's language to infer.",
+          "Always populate fields.toolName (または zapierTool) with the Zap name to run. " +
+          "Never fabricate HubSpot property names; rely on known fields or ask the user for clarification.",
         messages: input.messages,
         experimental_telemetry: telemetryFor("intent", {
           job_id: input.jobId,
@@ -201,7 +175,7 @@ export async function runSlackWorkflow(
     const validationStep = await runStep(
       "validate-intent",
       { intent },
-      async () => validateIntentAgainstHubSpot(intent)
+      async () => validateIntentForZapier(intent)
     );
 
     if (!validationStep.result.ok) {
@@ -275,15 +249,15 @@ export async function runSlackWorkflow(
       };
     }
 
-    let executionChannel: "hubspot" | "zapier";
-
     try {
-      const executionPlanStep = await runStep(
+      await runStep(
         "plan-execution",
         { intent },
-        async () => determineExecutionChannel(intent)
+        async () => {
+          ensureZapierBudget(intent);
+          return "zapier" as const;
+        }
       );
-      executionChannel = executionPlanStep.result;
     } catch (error) {
       if (error instanceof BudgetExceededError) {
         const issues = [error.message];
@@ -321,44 +295,12 @@ export async function runSlackWorkflow(
       throw error;
     }
 
+    const executionChannel = "zapier" as const;
+
     const executionStep = await runStep(
       "execute",
       { intent, executionChannel },
       async () => {
-        if (executionChannel === "hubspot") {
-          const execute = () =>
-            executeIntentWithHubSpot(intent, {
-              requestId: input.requestId,
-              traceId: input.jobId,
-            });
-
-          if (intent.action === "update" || intent.action === "delete") {
-            const recordId = String(
-              intent.fields.id ?? intent.fields.recordId ?? ""
-            );
-
-            if (!recordId) {
-              throw new Error("更新・削除には id または recordId が必要です");
-            }
-
-            const lockKey = `hs:${intent.object}:${recordId}`;
-            const lockResult = await withLock(lockKey, execute, {
-              ttlMs: 30_000,
-              retryMs: 400,
-            });
-
-            if (!lockResult.ok || lockResult.value === undefined) {
-              throw new Error(
-                "対象の HubSpot レコードがロック中のため処理できませんでした"
-              );
-            }
-
-            return lockResult.value;
-          }
-
-          return execute();
-        }
-
         const { toolName, zapierTool, args, payload, ...rest } =
           intent.fields as Record<string, unknown>;
         const resolvedToolName = String(toolName ?? zapierTool ?? "").trim();
@@ -387,8 +329,7 @@ export async function runSlackWorkflow(
       await executionStore.appendToolCall({
         id: crypto.randomUUID(),
         stepId: executionStep.stepId,
-        toolName:
-          executionChannel === "hubspot" ? "hubspot-sdk" : "zapier-mcp",
+        toolName: "zapier-mcp",
         payload: intent,
         response: executionResult,
         status: "succeeded",
@@ -403,8 +344,8 @@ export async function runSlackWorkflow(
         const { text } = await generateText({
           model: openai(appConfig.ai.executorModel),
           system:
-            "You are a Slack assistant summarizing HubSpot or Zapier actions in Japanese. " +
-            "Use short paragraphs or bullet points. Include concrete HubSpot IDs when available. " +
+            "You are a Slack assistant summarizing Zapier automation results in Japanese. " +
+            "Use short paragraphs or bullet points. Include concrete identifiers from the tool when available. " +
             "Do not mention internal policies.",
           messages: [
             {
@@ -418,14 +359,14 @@ export async function runSlackWorkflow(
           ],
           maxTokens: 800,
           maxSteps: 4,
-          experimental_telemetry: telemetryFor("review", {
-            job_id: input.jobId,
-            request_id: input.requestId,
-            execution_channel: executionChannel,
-          }),
-        });
+        experimental_telemetry: telemetryFor("review", {
+          job_id: input.jobId,
+          request_id: input.requestId,
+          execution_channel: executionChannel,
+        }),
+      });
 
-        return formatSlackText(text);
+      return formatSlackText(text);
       }
     );
 

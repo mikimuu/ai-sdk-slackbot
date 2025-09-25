@@ -19,13 +19,6 @@ const SlackSchema = z.object({
   appId: z.string().optional(),
 });
 
-const HubSpotSchema = z.object({
-  accessToken: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.length > 0 ? value : undefined)),
-});
-
 const ZapierSchema = z.object({
   mcpUrl: z.string().url(),
   apiKey: z
@@ -55,7 +48,6 @@ const AiSchema = z.object({
 const ConfigSchema = z.object({
   slack: SlackSchema,
   redis: RedisSchema,
-  hubspot: HubSpotSchema,
   zapier: ZapierSchema,
   postgres: PostgresSchema,
   ai: AiSchema,
@@ -73,9 +65,6 @@ const config: AppConfig = ConfigSchema.parse({
     url: process.env.REDIS_REST_URL,
     token: process.env.REDIS_REST_TOKEN,
     prefix: process.env.REDIS_PREFIX,
-  },
-  hubspot: {
-    accessToken: process.env.HUBSPOT_PRIVATE_APP_TOKEN,
   },
   zapier: {
     mcpUrl: process.env.ZAPIER_MCP_URL,

@@ -11,9 +11,6 @@ importers:
       '@ai-sdk/openai':
         specifier: ^1.1.14
         version: 1.1.15(zod@3.24.2)
-      '@hubspot/api-client':
-        specifier: ^13.2.0
-        version: 13.4.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.18.1
         version: 1.18.1
@@ -246,10 +243,6 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
-
-  '@hubspot/api-client@13.4.0':
-    resolution: {integrity: sha512-B2Bu/F/nxzqvF0LlEIgA28G6ObANXkYosJSFLW3bdYXOOgH9kbVLJwPGze0H6L+dQJ+vmzZ1LeRpl5REXyHShA==}
-    engines: {node: '>=18.0.0'}
 
   '@modelcontextprotocol/sdk@1.18.1':
     resolution: {integrity: sha512-d//GE8/Yh7aC3e7p+kZG8JqqEAwwDUmAfvH1quogtbk+ksS6E0RR6toKKESPYYZVre0meqkJb27zb+dhqE9Sgw==}
@@ -1038,18 +1031,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.25.10':
     optional: true
-
-  '@hubspot/api-client@13.4.0':
-    dependencies:
-      '@types/node': 20.17.22
-      '@types/node-fetch': 2.6.13
-      bottleneck: 2.19.5
-      es6-promise: 4.2.8
-      form-data: 4.0.4
-      lodash.merge: 4.6.2
-      node-fetch: 2.7.0
-    transitivePeerDependencies:
-      - encoding
 
   '@modelcontextprotocol/sdk@1.18.1':
     dependencies:
