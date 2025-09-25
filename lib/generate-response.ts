@@ -11,6 +11,7 @@ import {
   ensureZapierToolExists,
   executeZapierTool,
   findZapierToolForIntent,
+  listZapierTools,
 } from "./zapier-mcp";
 import { executionStore } from "./durable-store";
 import { telemetryFor } from "./telemetry";
@@ -212,10 +213,22 @@ export async function runSlackWorkflow(
       );
 
       const issues = validation.errors ?? [];
-      const prompt =
-        issues.length > 0
-          ? `以下の項目について追加情報が必要です:\n- ${issues.join("\n- ")}`
-          : "入力が不足しています。";
+      let prompt: string;
+      if (issues.length > 0) {
+        prompt = `以下の項目について追加情報が必要です:\n- ${issues.join("\n- ")}`;
+      } else if (!validation.toolName) {
+        const tools = await listZapierTools();
+        const hubspotTools = tools.filter((tool) =>
+          tool.toLowerCase().includes("hubspot")
+        );
+        const suggestions = hubspotTools.slice(0, 5).join("\n- ");
+        prompt =
+          suggestions.length > 0
+            ? `HubSpot 用に利用可能な Zapier ツールの候補です:\n- ${suggestions}\nどれを使うか指示してください。`
+            : "実行可能な Zapier ツールを特定できませんでした。ツール名や操作内容を詳しく教えてください。";
+      } else {
+        prompt = "入力が不足しています。";
+      }
 
       const { text } = await generateText({
         model: openai(appConfig.ai.executorModel),
