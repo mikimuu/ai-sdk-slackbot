@@ -5,11 +5,25 @@ import { appConfig } from "./config";
 
 export const client = new WebClient(appConfig.slack.botToken);
 
-export const IN_PROGRESS_REACTION =
-  process.env.SLACK_REACTION_IN_PROGRESS?.trim() || "hourglass_flowing_sand";
+const normalizeReactionName = (value: string | undefined, fallback: string) => {
+  if (!value) return fallback;
+  const normalized = value
+    .trim()
+    .replace(/:/g, "")
+    .replace(/\s+/g, "_")
+    .toLowerCase();
+  return normalized.length > 0 ? normalized : fallback;
+};
 
-export const DONE_REACTION =
-  process.env.SLACK_REACTION_DONE?.trim() || "check_mark_button";
+export const IN_PROGRESS_REACTION = normalizeReactionName(
+  process.env.SLACK_REACTION_IN_PROGRESS,
+  "hourglass_flowing_sand"
+);
+
+export const DONE_REACTION = normalizeReactionName(
+  process.env.SLACK_REACTION_DONE,
+  "white_check_mark"
+);
 
 // See https://api.slack.com/authentication/verifying-requests-from-slack
 export async function isValidSlackRequest({
