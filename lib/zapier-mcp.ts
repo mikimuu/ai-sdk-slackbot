@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { Intent } from "./intent";
 import { appConfig } from "./config";
 
 type ToolDefinition = Awaited<
@@ -83,4 +84,80 @@ export async function executeZapierTool(
 export async function listZapierTools() {
   const tools = await initTools();
   return tools.map((tool) => tool.name);
+}
+
+export async function ensureZapierToolExists(toolName: string) {
+  const tools = await initTools();
+  return tools.find((tool) => tool.name === toolName) ?? null;
+}
+
+const ACTION_KEYWORDS: Record<Intent["action"], string[]> = {
+  read: ["get", "find", "list", "search", "lookup", "retrieve"],
+  create: ["create", "add", "new", "insert"],
+  update: ["update", "edit", "modify", "set", "patch"],
+  upsert: ["upsert", "create", "update", "sync"],
+  delete: ["delete", "remove", "archive"],
+  report: ["report", "summary", "analytics", "export"],
+};
+
+const OBJECT_KEYWORDS: Record<Intent["object"], string[]> = {
+  contact: ["contact", "person", "lead"],
+  company: ["company", "organization", "account"],
+  deal: ["deal", "opportunity", "pipeline"],
+  ticket: ["ticket", "case", "issue"],
+  custom: ["custom", "object"],
+};
+
+export async function findZapierToolForIntent(intent: Intent) {
+  const tools = await initTools();
+  const actionKeywords = ACTION_KEYWORDS[intent.action] ?? [];
+  const objectKeywords = OBJECT_KEYWORDS[intent.object] ?? [];
+
+  let bestMatch: { tool: ToolDefinition; score: number } | null = null;
+
+  for (const tool of tools) {
+    const name = tool.name.toLowerCase();
+    const description = (tool.description ?? "").toLowerCase();
+    const text = `${name} ${description}`;
+
+    let score = 0;
+
+    if (name.includes("hubspot") || description.includes("hubspot")) {
+      score += 4;
+    }
+
+    for (const keyword of objectKeywords) {
+      if (text.includes(keyword)) {
+        score += 3;
+        break;
+      }
+    }
+
+    for (const keyword of actionKeywords) {
+      if (text.includes(keyword)) {
+        score += 3;
+        break;
+      }
+    }
+
+    if (intent.action === "read" && text.includes("search")) {
+      score += 1;
+    }
+
+    if (intent.action === "update" && text.includes("property")) {
+      score += 1;
+    }
+
+    if (score === 0) continue;
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { tool, score };
+    }
+  }
+
+  if (!bestMatch) return null;
+
+  return {
+    toolName: bestMatch.tool.name,
+  };
 }

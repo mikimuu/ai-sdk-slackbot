@@ -7,7 +7,11 @@ import {
   IntentGuardrails,
   IntentSchema,
 } from "./intent";
-import { executeZapierTool } from "./zapier-mcp";
+import {
+  ensureZapierToolExists,
+  executeZapierTool,
+  findZapierToolForIntent,
+} from "./zapier-mcp";
 import { executionStore } from "./durable-store";
 import { telemetryFor } from "./telemetry";
 
@@ -31,6 +35,7 @@ export type SlackWorkflowResult = {
   text: string;
   intent?: Intent;
   tool?: "zapier";
+  toolName?: string;
   rawResult?: unknown;
   issues?: string[];
 };
@@ -67,18 +72,37 @@ function ensureZapierBudget(intent: Intent) {
   }
 }
 
-function validateIntentForZapier(intent: Intent) {
+async function validateIntentForZapier(intent: Intent) {
   const errors: string[] = [];
   const fields = intent.fields as Record<string, unknown>;
-  const toolName = String(fields.toolName ?? fields.zapierTool ?? "").trim();
+  const explicitToolName = String(
+    fields.toolName ?? fields.zapierTool ?? ""
+  ).trim();
 
-  if (!toolName) {
-    errors.push("fields.toolName (または zapierTool) を指定してください");
+  let resolvedToolName: string | undefined =
+    explicitToolName.length > 0 ? explicitToolName : undefined;
+
+  if (resolvedToolName) {
+    const tool = await ensureZapierToolExists(resolvedToolName);
+    if (!tool) {
+      errors.push(`指定の Zapier ツール '${resolvedToolName}' が見つかりません`);
+      resolvedToolName = undefined;
+    }
+  } else {
+    const suggestion = await findZapierToolForIntent(intent);
+    if (suggestion) {
+      resolvedToolName = suggestion.toolName;
+    } else {
+      errors.push(
+        "実行可能な Zapier ツールを特定できませんでした。操作内容を具体的に指示してください。"
+      );
+    }
   }
 
   return {
     ok: errors.length === 0,
     errors,
+    toolName: resolvedToolName,
   };
 }
 
@@ -178,14 +202,16 @@ export async function runSlackWorkflow(
       async () => validateIntentForZapier(intent)
     );
 
-    if (!validationStep.result.ok) {
+    const validation = validationStep.result;
+
+    if (!validation.ok || !validation.toolName) {
       await executionStore.updateJobStatus(
         input.jobId,
         intent.confirmRequired ? "awaiting_confirmation" : "failed",
-        validationStep.result.errors?.join(", ")
+        validation.errors?.join(", ")
       );
 
-      const issues = validationStep.result.errors ?? [];
+      const issues = validation.errors ?? [];
       const prompt =
         issues.length > 0
           ? `以下の項目について追加情報が必要です:\n- ${issues.join("\n- ")}`
@@ -215,6 +241,12 @@ export async function runSlackWorkflow(
         intent,
         issues,
       };
+    }
+
+    const resolvedToolName = validation.toolName;
+    const fieldsRecord = intent.fields as Record<string, unknown>;
+    if (!fieldsRecord.toolName) {
+      fieldsRecord.toolName = resolvedToolName;
     }
 
     if (intent.confirmRequired) {
@@ -299,27 +331,39 @@ export async function runSlackWorkflow(
 
     const executionStep = await runStep(
       "execute",
-      { intent, executionChannel },
+      { intent, executionChannel, toolName: resolvedToolName },
       async () => {
-        const { toolName, zapierTool, args, payload, ...rest } =
-          intent.fields as Record<string, unknown>;
-        const resolvedToolName = String(toolName ?? zapierTool ?? "").trim();
+        const {
+          toolName: _toolName,
+          zapierTool: _zapierTool,
+          args,
+          payload,
+          ...rest
+        } = fieldsRecord;
 
-        if (!resolvedToolName) {
-          throw new Error(
-            "Zapier の実行には fields.toolName (または zapierTool) が必要です"
-          );
-        }
-
-        const toolArgs =
+        const baseArgs =
           (args as Record<string, unknown> | undefined) ??
           (payload as Record<string, unknown> | undefined) ??
-          rest;
+          {};
 
-        return executeZapierTool(
-          resolvedToolName,
-          toolArgs as Record<string, unknown>
-        );
+        const combinedArgs: Record<string, unknown> = {
+          ...rest,
+          ...baseArgs,
+        };
+
+        if (intent.filters.length > 0 && combinedArgs.filters === undefined) {
+          combinedArgs.filters = intent.filters;
+        }
+
+        if (
+          intent.action === "read" &&
+          combinedArgs.limit === undefined &&
+          intent.limit
+        ) {
+          combinedArgs.limit = intent.limit;
+        }
+
+        return executeZapierTool(resolvedToolName, combinedArgs);
       }
     );
 
@@ -329,7 +373,7 @@ export async function runSlackWorkflow(
       await executionStore.appendToolCall({
         id: crypto.randomUUID(),
         stepId: executionStep.stepId,
-        toolName: "zapier-mcp",
+        toolName: resolvedToolName,
         payload: intent,
         response: executionResult,
         status: "succeeded",
@@ -339,7 +383,7 @@ export async function runSlackWorkflow(
 
     const reviewStep = await runStep(
       "review",
-      { intent, executionChannel, executionResult },
+      { intent, executionChannel, executionResult, toolName: resolvedToolName },
       async () => {
         const { text } = await generateText({
           model: openai(appConfig.ai.executorModel),
@@ -356,17 +400,22 @@ export async function runSlackWorkflow(
               role: "user",
               content: `Result: ${JSON.stringify(executionResult).slice(0, 3500)}`,
             },
+            {
+              role: "user",
+              content: `Tool Name: ${resolvedToolName}`,
+            },
           ],
           maxTokens: 800,
           maxSteps: 4,
-        experimental_telemetry: telemetryFor("review", {
-          job_id: input.jobId,
-          request_id: input.requestId,
-          execution_channel: executionChannel,
-        }),
-      });
+          experimental_telemetry: telemetryFor("review", {
+            job_id: input.jobId,
+            request_id: input.requestId,
+            execution_channel: executionChannel,
+            zapier_tool: resolvedToolName,
+          }),
+        });
 
-      return formatSlackText(text);
+        return formatSlackText(text);
       }
     );
 
@@ -377,6 +426,7 @@ export async function runSlackWorkflow(
       text: reviewStep.result,
       intent,
       tool: executionChannel,
+      toolName: resolvedToolName,
       rawResult: executionResult,
     };
   } catch (error) {
