@@ -18,6 +18,7 @@ import {
 import { runSlackWorkflow } from "./generate-response";
 import { executionStore } from "./durable-store";
 import { SlackEnvelope } from "./types";
+import { debugLog } from "./logger";
 
 export async function assistantThreadMessage(
   event: AssistantThreadStartedEvent,
@@ -25,6 +26,10 @@ export async function assistantThreadMessage(
   const { channel_id, thread_ts } = event.assistant_thread;
   console.log(`Thread started: ${channel_id} ${thread_ts}`);
   console.log(JSON.stringify(event));
+  debugLog("slack.assistant_thread", "スレッドが開始されました", {
+    channel: channel_id,
+    threadTs: thread_ts,
+  });
 
   await client.chat.postMessage({
     channel: channel_id,
@@ -68,6 +73,11 @@ export async function handleNewAssistantMessage(
   const idempotencyKey = `${teamId}:${envelope.eventId}:${event.ts}`;
   const shouldProcess = await ensureIdempotency(idempotencyKey);
   if (!shouldProcess) return;
+  debugLog("slack.dm", "新しいメッセージを処理", {
+    channel,
+    threadTs: thread_ts,
+    user: event.user,
+  });
 
   const updateStatus = updateStatusUtil(channel, thread_ts);
   await updateStatus("is thinking...");
@@ -136,6 +146,10 @@ export async function handleNewAssistantMessage(
           },
         ],
       });
+      debugLog("slack.dm", "DM ワークフロー完了", {
+        jobId,
+        status: workflowResult.status,
+      });
     });
 
     if (!lockResult.ok) {
@@ -144,6 +158,7 @@ export async function handleNewAssistantMessage(
         thread_ts: thread_ts,
         text: "別の処理が進行中です。少し間を置いてから再度お試しください。",
       });
+      debugLog("slack.dm", "ロック取得に失敗", { channel, threadTs: thread_ts });
     }
 
     if (messageTs && inProgressReactionActive) {
@@ -189,5 +204,6 @@ export async function handleNewAssistantMessage(
   } finally {
     await clearIdempotency(idempotencyKey);
     await updateStatus("");
+    debugLog("slack.dm", "処理完了", { jobId, channel, threadTs: thread_ts });
   }
 }

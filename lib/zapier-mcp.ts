@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Intent } from "./intent";
 import { appConfig } from "./config";
+import { debugLog } from "./logger";
 
 type ToolDefinition = Awaited<
   ReturnType<Client["listTools"]>
@@ -99,6 +100,9 @@ async function initTools(forceRefresh = false) {
   const client = await getClient();
   const { tools } = await client.listTools();
   cachedTools = tools;
+  debugLog("zapier.mcp", forceRefresh ? "ツール一覧を再取得" : "ツール一覧をロード", {
+    count: tools.length,
+  });
   return tools;
 }
 
@@ -125,9 +129,17 @@ export async function executeZapierTool(
     throw new Error(`Zapier MCP tool ${toolName} not found`);
   }
 
+  debugLog("zapier.mcp", "Zapier ツールを呼び出し", {
+    toolName,
+  });
+
   const result = await client.callTool({
     name: toolName,
     arguments: args,
+  });
+
+  debugLog("zapier.mcp", "Zapier ツールのレスポンスを受信", {
+    toolName,
   });
 
   return {
@@ -157,8 +169,13 @@ export async function ensureZapierToolExists(toolName: string) {
   }
 
   if (match && isDeprecatedToolName(match.name)) {
+    debugLog("zapier.mcp", "非推奨ツールのため無視", { toolName: match.name });
     return null;
   }
+  debugLog("zapier.mcp", "ツール存在チェック", {
+    toolName: normalized,
+    found: Boolean(match),
+  });
   return match;
 }
 
@@ -205,6 +222,11 @@ export async function findZapierToolForIntent(intent: Intent) {
         (tool) => typeof tool.name === "string" && tool.name === candidate
       );
       if (match) {
+        debugLog("zapier.mcp", "プリセットマッピングでツールを選択", {
+          action: intent.action,
+          object: intent.object,
+          toolName: match.name,
+        });
         return { toolName: match.name } as const;
       }
     }
@@ -263,6 +285,12 @@ export async function findZapierToolForIntent(intent: Intent) {
     }
 
     if (bestMatch) {
+      debugLog("zapier.mcp", "キーワードマッチでツールを選択", {
+        action: intent.action,
+        object: intent.object,
+        toolName: bestMatch.tool.name,
+        score: bestMatch.score,
+      });
       return { toolName: bestMatch.tool.name } as const;
     }
 
@@ -281,5 +309,10 @@ export async function findZapierToolForIntent(intent: Intent) {
     resolved = attemptResolve(tools);
   }
 
+  debugLog("zapier.mcp", "Intent からツールを解決", {
+    action: intent.action,
+    object: intent.object,
+    toolName: resolved?.toolName ?? null,
+  });
   return resolved;
 }

@@ -21,6 +21,7 @@ import {
 import { runSlackWorkflow } from "./generate-response";
 import { executionStore } from "./durable-store";
 import { SlackEnvelope } from "./types";
+import { debugLog } from "./logger";
 
 export async function handleNewAppMention(
   event: AppMentionEvent,
@@ -28,6 +29,9 @@ export async function handleNewAppMention(
   envelope: SlackEnvelope
 ) {
   if (event.bot_id || event.bot_id === botUserId || event.bot_profile) {
+    debugLog("slack.app_mention", "ボットからのメッセージのため無視", {
+      botId: event.bot_id,
+    });
     return;
   }
 
@@ -55,6 +59,9 @@ export async function handleNewAppMention(
   const shouldProcess = await ensureIdempotency(idempotencyKey);
   if (!shouldProcess) {
     console.log("Duplicate Slack event detected; skipping execution");
+    debugLog("slack.app_mention", "重複イベントをスキップ", {
+      idempotencyKey,
+    });
     return;
   }
 
@@ -68,6 +75,11 @@ export async function handleNewAppMention(
         name: IN_PROGRESS_REACTION,
       });
       inProgressReactionActive = true;
+      debugLog("slack.app_mention", "リアクションを追加", {
+        reaction: IN_PROGRESS_REACTION,
+        channel: event.channel,
+        timestamp: reactionTarget,
+      });
     } catch (error) {
       console.error("Failed to add in-progress reaction", error);
     }
@@ -75,10 +87,18 @@ export async function handleNewAppMention(
 
   const jobId = crypto.randomUUID();
   const requestId = crypto.randomUUID();
+  debugLog("slack.app_mention", "ジョブを初期化", {
+    jobId,
+    requestId,
+    threadTs,
+  });
 
   try {
     const lockKey = `thread:${teamId}:${threadTs}`;
     const lockResult = await withLock(lockKey, async () => {
+      debugLog("slack.app_mention", "ロックを取得", {
+        lockKey,
+      });
       await executionStore.createJob({
         id: jobId,
         slackTeamId: teamId,
@@ -114,6 +134,10 @@ export async function handleNewAppMention(
       });
 
       await postWorkflowResult(event.channel, threadTs, workflowResult);
+      debugLog("slack.app_mention", "ワークフロー完了", {
+        jobId,
+        status: workflowResult.status,
+      });
     });
 
     if (!lockResult.ok) {
@@ -121,6 +145,9 @@ export async function handleNewAppMention(
         channel: event.channel,
         thread_ts: threadTs,
         text: "別の処理が進行中のため、少し待ってから再度お試しください。",
+      });
+      debugLog("slack.app_mention", "ロック取得に失敗", {
+        lockKey,
       });
     }
 
@@ -168,8 +195,15 @@ export async function handleNewAppMention(
       thread_ts: threadTs,
       text: "申し訳ありません。エラーが発生しました。しばらくしてからもう一度お試しください。",
     });
+    debugLog("slack.app_mention", "ワークフロー中にエラー", {
+      jobId,
+      message: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     await clearIdempotency(idempotencyKey);
+    debugLog("slack.app_mention", "冪等性キーを解放", {
+      idempotencyKey,
+    });
   }
 }
 

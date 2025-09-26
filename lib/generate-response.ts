@@ -15,6 +15,7 @@ import {
 } from "./zapier-mcp";
 import { executionStore } from "./durable-store";
 import { telemetryFor } from "./telemetry";
+import { debugLog } from "./logger";
 
 export type SlackWorkflowInput = {
   jobId: string;
@@ -110,6 +111,11 @@ async function validateIntentForZapier(intent: Intent) {
 export async function runSlackWorkflow(
   input: SlackWorkflowInput
 ): Promise<SlackWorkflowResult> {
+  debugLog("workflow", "Slack ワークフロー開始", {
+    jobId: input.jobId,
+    channel: input.slack.channelId,
+    threadTs: input.slack.threadTs,
+  });
   const sequenceCounter = { value: 0 };
 
   const recordStep = async (record: StepRecordInput) => {
@@ -192,6 +198,12 @@ export async function runSlackWorkflow(
       });
 
       const intent = IntentGuardrails.enforceConfirmation(IntentSchema.parse(object));
+      debugLog("workflow.intent", "Intent を抽出", {
+        jobId: input.jobId,
+        action: intent.action,
+        object: intent.object,
+        confirmRequired: intent.confirmRequired,
+      });
       return intent;
     });
 
@@ -206,6 +218,10 @@ export async function runSlackWorkflow(
     const validation = validationStep.result;
 
     if (!validation.ok || !validation.toolName) {
+      debugLog("workflow.validation", "Intent バリデーションに失敗", {
+        jobId: input.jobId,
+        issues: validation.errors,
+      });
       await executionStore.updateJobStatus(
         input.jobId,
         intent.confirmRequired ? "awaiting_confirmation" : "failed",
@@ -263,6 +279,11 @@ export async function runSlackWorkflow(
     }
 
     if (intent.confirmRequired) {
+      debugLog("workflow.hitl", "承認が必要", {
+        jobId: input.jobId,
+        action: intent.action,
+        object: intent.object,
+      });
       await executionStore.updateJobStatus(
         input.jobId,
         "awaiting_confirmation",
@@ -300,11 +321,19 @@ export async function runSlackWorkflow(
         { intent },
         async () => {
           ensureZapierBudget(intent);
+          debugLog("workflow.plan", "Zapier 実行を計画", {
+            jobId: input.jobId,
+            toolName: resolvedToolName,
+          });
           return "zapier" as const;
         }
       );
     } catch (error) {
       if (error instanceof BudgetExceededError) {
+        debugLog("workflow.plan", "Zapier 予算超過", {
+          jobId: input.jobId,
+          message: error.message,
+        });
         const issues = [error.message];
         await executionStore.updateJobStatus(
           input.jobId,
@@ -346,6 +375,10 @@ export async function runSlackWorkflow(
       "execute",
       { intent, executionChannel, toolName: resolvedToolName },
       async () => {
+        debugLog("workflow.execute", "Zapier ツールを実行", {
+          jobId: input.jobId,
+          toolName: resolvedToolName,
+        });
         const {
           toolName: _toolName,
           zapierTool: _zapierTool,
@@ -376,7 +409,12 @@ export async function runSlackWorkflow(
           combinedArgs.limit = intent.limit;
         }
 
-        return executeZapierTool(resolvedToolName, combinedArgs);
+        const result = await executeZapierTool(resolvedToolName, combinedArgs);
+        debugLog("workflow.execute", "Zapier ツールの実行結果", {
+          jobId: input.jobId,
+          toolName: resolvedToolName,
+        });
+        return result;
       }
     );
 
@@ -398,6 +436,10 @@ export async function runSlackWorkflow(
       "review",
       { intent, executionChannel, executionResult, toolName: resolvedToolName },
       async () => {
+        debugLog("workflow.review", "結果サマリーを生成", {
+          jobId: input.jobId,
+          toolName: resolvedToolName,
+        });
         const { text } = await generateText({
           model: openai(appConfig.ai.executorModel),
           system:
@@ -433,6 +475,10 @@ export async function runSlackWorkflow(
     );
 
     await executionStore.updateJobStatus(input.jobId, "completed", null);
+    debugLog("workflow", "Slack ワークフロー成功", {
+      jobId: input.jobId,
+      toolName: resolvedToolName,
+    });
 
     return {
       status: "completed",
@@ -445,6 +491,10 @@ export async function runSlackWorkflow(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await executionStore.updateJobStatus(input.jobId, "failed", message);
+    debugLog("workflow", "Slack ワークフローでエラー", {
+      jobId: input.jobId,
+      message,
+    });
 
     return {
       status: "failed",
