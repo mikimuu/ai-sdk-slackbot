@@ -397,6 +397,24 @@ export async function runSlackWorkflow(
           ...baseArgs,
         };
 
+        if (combinedArgs.instructions === undefined) {
+          const lastUserMessage = [...input.messages]
+            .reverse()
+            .find((message) => message.role === "user");
+
+          const candidateInstruction =
+            typeof lastUserMessage?.content === "string"
+              ? lastUserMessage.content
+              : input.latestUserMessage;
+
+          if (
+            typeof candidateInstruction === "string" &&
+            candidateInstruction.trim().length > 0
+          ) {
+            combinedArgs.instructions = candidateInstruction.trim();
+          }
+        }
+
         if (intent.filters.length > 0 && combinedArgs.filters === undefined) {
           combinedArgs.filters = intent.filters;
         }
