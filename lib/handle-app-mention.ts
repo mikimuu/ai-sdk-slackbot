@@ -1,11 +1,4 @@
 import crypto from "crypto";
-import type {
-  AppMentionEvent,
-  ContextBlock,
-  KnownBlock,
-  MrkdwnElement,
-  SectionBlock,
-} from "@slack/web-api";
 import type { CoreMessage, CoreUserMessage } from "ai";
 import {
   DONE_REACTION,
@@ -22,6 +15,13 @@ import { runSlackWorkflow } from "./generate-response";
 import { executionStore } from "./durable-store";
 import { SlackEnvelope } from "./types";
 import { debugLog } from "./logger";
+import type {
+  AppMentionEvent,
+  ContextBlock,
+  KnownBlock,
+  MrkdwnElement,
+  SectionBlock,
+} from "./slack-events";
 
 export async function handleNewAppMention(
   event: AppMentionEvent,

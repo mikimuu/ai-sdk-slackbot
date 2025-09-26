@@ -1,4 +1,3 @@
-import type { SlackEvent } from "@slack/web-api";
 import {
   assistantThreadMessage,
   handleNewAssistantMessage,
@@ -7,6 +6,12 @@ import { waitUntil } from "@vercel/functions";
 import { handleNewAppMention } from "../lib/handle-app-mention";
 import { verifyRequest, getBotId } from "../lib/slack-utils";
 import { debugLog } from "../lib/logger";
+import {
+  isAppMentionEvent,
+  isAssistantThreadStartedEvent,
+  isGenericMessageEvent,
+  type SlackEvent,
+} from "../lib/slack-events";
 
 export async function POST(request: Request) {
   try {
@@ -59,23 +64,23 @@ export async function POST(request: Request) {
       eventId: envelope.eventId,
     });
 
-    if (event.type === "app_mention") {
+    if (isAppMentionEvent(event)) {
       debugLog("slack.events", "app_mention をバックグラウンド処理", {
-        threadTs: (event as { thread_ts?: string }).thread_ts,
-        channel: (event as { channel?: string }).channel,
+        threadTs: event.thread_ts,
+        channel: event.channel,
       });
       waitUntil(handleNewAppMention(event, botUserId, envelope));
     }
 
-    if (event.type === "assistant_thread_started") {
+    if (isAssistantThreadStartedEvent(event)) {
       debugLog("slack.events", "assistant_thread_started を処理", {
-        channel: (event as { channel?: string }).channel,
+        channel: event.channel,
       });
       waitUntil(assistantThreadMessage(event));
     }
 
     if (
-      event.type === "message" &&
+      isGenericMessageEvent(event) &&
       !event.subtype &&
       event.channel_type === "im" &&
       !event.bot_id &&

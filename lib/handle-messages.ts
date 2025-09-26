@@ -1,8 +1,4 @@
 import crypto from "crypto";
-import type {
-  AssistantThreadStartedEvent,
-  GenericMessageEvent,
-} from "@slack/web-api";
 import {
   DONE_REACTION,
   IN_PROGRESS_REACTION,
@@ -10,6 +6,10 @@ import {
   getThread,
   updateStatusUtil,
 } from "./slack-utils";
+import type {
+  AssistantThreadStartedEvent,
+  GenericMessageEvent,
+} from "./slack-events";
 import {
   clearIdempotency,
   ensureIdempotency,
@@ -70,7 +70,16 @@ export async function handleNewAssistantMessage(
   const teamId = envelope.teamId || event.team;
   if (!teamId) return;
 
-  const idempotencyKey = `${teamId}:${envelope.eventId}:${event.ts}`;
+  const eventTimestamp = event.ts ?? event.thread_ts;
+  if (!eventTimestamp) {
+    debugLog("slack.dm", "イベント timestamp が取得できません", {
+      channel,
+      threadTs: thread_ts,
+    });
+    return;
+  }
+
+  const idempotencyKey = `${teamId}:${envelope.eventId}:${eventTimestamp}`;
   const shouldProcess = await ensureIdempotency(idempotencyKey);
   if (!shouldProcess) return;
   debugLog("slack.dm", "新しいメッセージを処理", {
@@ -83,6 +92,13 @@ export async function handleNewAssistantMessage(
   await updateStatus("is thinking...");
 
   const messageTs = event.ts;
+  if (!messageTs) {
+    debugLog("slack.dm", "メッセージの timestamp が未設定のため中断", {
+      channel,
+      threadTs: thread_ts,
+    });
+    return;
+  }
   let inProgressReactionActive = false;
 
   if (messageTs) {
@@ -125,7 +141,7 @@ export async function handleNewAssistantMessage(
           teamId,
           channelId: channel,
           threadTs: thread_ts,
-          eventTs: event.ts,
+          eventTs: eventTimestamp,
           eventId: envelope.eventId,
           userId: event.user ?? "",
         },
