@@ -36,9 +36,9 @@ const PostgresSchema = z.object({
 });
 
 const AiSchema = z.object({
-  supervisorModel: z.string().default("openai:gpt-5"),
-  intentModel: z.string().default("openai:gpt-4o-mini"),
-  executorModel: z.string().default("openai:gpt-4o"),
+  supervisorModel: z.string().default("gpt-5-reasoning-preview"),
+  intentModel: z.string().default("gpt-4o-mini"),
+  executorModel: z.string().default("gpt-4o"),
   enableTelemetry: z
     .string()
     .optional()
@@ -55,7 +55,7 @@ const ConfigSchema = z.object({
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
 
-const config: AppConfig = ConfigSchema.parse({
+const rawConfig = ConfigSchema.parse({
   slack: {
     signingSecret: process.env.SLACK_SIGNING_SECRET,
     botToken: process.env.SLACK_BOT_TOKEN,
@@ -75,11 +75,22 @@ const config: AppConfig = ConfigSchema.parse({
   },
   ai: {
     supervisorModel:
-      process.env.AI_SUPERVISOR_MODEL || "openai:gpt-5-reasoning-preview",
-    intentModel: process.env.AI_INTENT_MODEL || "openai:gpt-4o-mini",
-    executorModel: process.env.AI_EXECUTOR_MODEL || "openai:gpt-4o",
+      process.env.AI_SUPERVISOR_MODEL || "gpt-5-reasoning-preview",
+    intentModel: process.env.AI_INTENT_MODEL || "gpt-4o-mini",
+    executorModel: process.env.AI_EXECUTOR_MODEL || "gpt-4o",
     enableTelemetry: process.env.AI_TELEMETRY_ENABLED,
   },
 });
 
-export const appConfig = config;
+const stripOpenAIPrefix = (model: string) =>
+  model.startsWith("openai:") ? model.slice("openai:".length) : model;
+
+export const appConfig: AppConfig = {
+  ...rawConfig,
+  ai: {
+    ...rawConfig.ai,
+    supervisorModel: stripOpenAIPrefix(rawConfig.ai.supervisorModel),
+    intentModel: stripOpenAIPrefix(rawConfig.ai.intentModel),
+    executorModel: stripOpenAIPrefix(rawConfig.ai.executorModel),
+  },
+};
